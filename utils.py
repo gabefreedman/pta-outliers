@@ -49,7 +49,7 @@ def fourier_basis(psr):
     return basis
 
 
-def ecorr_prior(signal, params=params, psr=psr):
+def ecorr_prior(signal, params=None, psr=None):
     return [10**(2*l.value) for l in list(signal._params.values())]
 
 
@@ -83,6 +83,7 @@ def construct_N(sc, psr):
     # Let's divide up into our different observing systems (our k's)
     # First we need to generate a 'mask' dictionary, aka matching receivers
     # to the TOAs they measured
+    selection = selections.Selection(selections.by_backend)
     sel = selection(psr)
     masks = sel.masks
 
@@ -123,7 +124,7 @@ def construct_basis(signal, params):
     return basis, slices
 
 
-def get_phi(signal, params, prior):
+def get_phi(signal, psr, params, prior):
     basis, slices = construct_basis(signal, params)
     
     nc = basis.shape[1]
@@ -155,13 +156,13 @@ def construct_T(sc, params):
     return T
 
 
-def construct_phi(sc, params, priors):
+def construct_phi(sc, psr, params, priors):
     idxlst = list(sc._idx.values())
     ncol = int(idxlst[-1][-1] + 1)
     phi = KernelMatrix(ncol)
     for signal in sc._signals:
         if signal in sc._idx:
-            phislc = get_phi(signal, params, priors[signal.name])
+            phislc = get_phi(signal, psr, params, priors[signal.name])
             phi = phi.add(phislc, sc._idx[signal])
     return phi
 
@@ -208,7 +209,7 @@ def custom_likelihood(pta, psr, params):
     
     T = construct_T(sc, params)
     
-    phi = construct_phi(sc, params, priordict)
+    phi = construct_phi(sc, psr, params, priordict)
     phiinv, logdet_phi = get_phiinv(phi)
 
     TNr = get_TNr(T, Nvec, r)
