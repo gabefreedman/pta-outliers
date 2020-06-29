@@ -21,6 +21,8 @@ class baseLikelihood(object):
         self.npsrs = len(self.likob.ptapsrs)
         self.psr = likob.ptapsrs[0]
         self.ptasignals = likob.ptasignals
+        self.pardes = likob.pardes
+        self.dimensions = likob.dimensions
         self.msk = likob.interval
 
         self.npf = likob.npf
