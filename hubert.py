@@ -143,6 +143,19 @@ class baseLikelihood(object):
                     if calc_gradient and signal['npars'] == 1:
                         self.d_Nvec_d_param[signal['parindex']] = signal['Nvec'] * \
                                                              2*np.log(10)*10**(2*parameters[signal['parindex']])
+                
+                elif signal['stype'] == 'jitter':
+                    if signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[signal['parindex']])
+                    else:
+                        pequadsqr = 10**(2*signal['pstart'][0])
+
+                    self.Jvec += signal['Jvec'] * pequadsqr
+
+                    if calc_gradient and signal['npars'] == 1:
+                        self.d_Jvec_d_param[signal['parindex']] = \
+                                signal['Jvec'] * \
+                                2*np.log(10)*10**(2*parameters[signal['parindex']])
         return
     
     
@@ -280,26 +293,25 @@ class baseLikelihood(object):
         P0 = self.psr.P0
         Pb = self.outlier_prob
     
-        if np.sum(self.Jvec) == 0:
-            self.rGr = np.sum(self.detresiduals**2 / self.Nvec)
-            self.GNGldet = np.sum(np.log(self.Nvec))
-    
-            lln = self.detresiduals**2 / self.Nvec
-            lld = np.log(self.Nvec) + np.log(2*np.pi)
-            logL0 = -0.5*lln -0.5*lld
-            bigL0 = (1. - Pb) * np.exp(logL0)
-            bigL = bigL0 + Pb/P0
-            logl_outlier += np.sum(np.log(bigL))
+        self.rGr = np.sum(self.detresiduals**2 / self.Nvec)
+        self.GNGldet = np.sum(np.log(self.Nvec))
 
-            for pslc, d_L_d_b_o in self.outlier_sig_dict[0]:
-                gradient[pslc] += np.sum(d_L_d_b_o * bigL0[None,:]/bigL[None,:], axis=1)
+        lln = self.detresiduals**2 / self.Nvec
+        lld = np.log(self.Nvec) + np.log(2*np.pi)
+        logL0 = -0.5*lln -0.5*lld
+        bigL0 = (1. - Pb) * np.exp(logL0)
+        bigL = bigL0 + Pb/P0
+        logl_outlier += np.sum(np.log(bigL))
 
-            for pbind in self.d_Pb_ind:
-                gradient[pbind] += np.sum((-np.exp(logL0)+1.0/P0)/bigL)
+        for pslc, d_L_d_b_o in self.outlier_sig_dict[0]:
+            gradient[pslc] += np.sum(d_L_d_b_o * bigL0[None,:]/bigL[None,:], axis=1)
 
-            for key, d_Nvec_d_p in self.d_Nvec_d_param.items():
-                d_L_d_b_o = 0.5*(self.detresiduals**2 * d_Nvec_d_p / self.Nvec**2 - d_Nvec_d_p / self.Nvec)
-                gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
+        for pbind in self.d_Pb_ind:
+            gradient[pbind] += np.sum((-np.exp(logL0)+1.0/P0)/bigL)
+
+        for key, d_Nvec_d_p in self.d_Nvec_d_param.items():
+            d_L_d_b_o = 0.5*(self.detresiduals**2 * d_Nvec_d_p / self.Nvec**2 - d_Nvec_d_p / self.Nvec)
+            gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
 
         if self.psr.fourierind is not None:
             findex = np.sum(self.npf[:0])
@@ -333,6 +345,16 @@ class baseLikelihood(object):
 
             bBb += np.sum(bsqr / jvec)
             ldB += np.sum(np.log(jvec))
+            
+            gradient[pslc] += d_Pr_d_b[pslc]
+
+            # Gradient for Thetavec hyper-parameters
+            for key, d_Jvec_d_p in self.d_Jvec_d_param.items():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                # Determinant
+                gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
 
