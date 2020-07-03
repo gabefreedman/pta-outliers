@@ -17,8 +17,8 @@ from funnel_transform import funnelLikelihood
 
 class fullLikelihood(funnelLikelihood):
     
-    def __init__(self, likob):
-        super(fullLikelihood, self).__init__(likob)
+    def __init__(self, likob, psr):
+        super(fullLikelihood, self).__init__(likob, psr)
         
         self.initBounds()
     

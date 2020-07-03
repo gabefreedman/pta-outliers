@@ -12,13 +12,23 @@ import numpy as np
 
 from piccard.jitterext import cython_Uj
 
+from enterprise.signals.gp_priors import powerlaw as pl
+from enterprise.signals.gp_bases import createfourierdesignmatrix_red
+from utils import load_pta
+
 
 class baseLikelihood(object):
 
-    def __init__(self, likob):
+    def __init__(self, likob, psr):
 
         self.likob = likob
-        self.npsrs = len(self.likob.ptapsrs)
+        self.pta = load_pta(psr)
+        
+        self.pulsar = psr
+        self.toas = self.pulsar.toas
+        
+        self.npsrs = len(self.pta.pulsars)
+        self.pname = self.pta.pulsars[0]
         self.psr = likob.ptapsrs[0]
         self.ptasignals = likob.ptasignals
         self.pardes = likob.pardes
@@ -54,8 +64,26 @@ class baseLikelihood(object):
         self.basepmax = likob.likob.likob.pmax
         self.basepstart = likob.likob.likob.pstart
         
+        # Below here are attributes related to enterprise PTA object
+        # These will eventually phase out the piccard attrs
+        self.ptapulsar = self.pta.pulsars[0]
+        self.ptaparams = {self.pname + '_efac': 1.0,
+                          self.pname + '_log10_equad': -6.5,
+                          self.pname + '_rn_log10_A': -14.5,
+                          self.pname + '_rn_gamma': 3.5}
+        
+        self.ptadict = {self.pname + '_efac': 0,
+                        self.pname + '_log10_equad': 1,
+                        self.pname + '_rn_log10_A': 2,
+                        self.pname + '_rn_gamma': 3}
+        
 
         self.clearLikob()
+
+
+    def updatePtaParams(self, parameters):
+        for key, value in self.ptadict.items():
+            self.ptaparams[key] = parameters[value]
 
 
     def clearLikob(self):
@@ -110,6 +138,25 @@ class baseLikelihood(object):
                             self.d_Phivec_d_param[signal['parindex']+col] = d_mat[:,col]
 
 
+    def pta_Phi(self, parameters, calc_gradient=True, ncomponents=30):
+        self.Phivec[:] = 0
+        self.Thetavec[:] = 0
+        
+        log10A = self.ptaparams[self.pname + '_rn_log10_A']
+        gamma = self.ptaparams[self.pname + '_rn_gamma']
+        sTmax = self.toas.max()
+        nfreq = ncomponents
+        _, Ffreqs = createfourierdesignmatrix_red(self.toas)
+        
+        pcd = pl(Ffreqs, log10_A=log10A, gamma=gamma)
+        self.Phivec[:2*nfreq] += pcd
+        
+        if calc_gradient:
+            d_mat = d_powerlaw(log10A, gamma, sTmax, Ffreqs)
+            print(d_mat)
+        
+        return
+    
 
     def setPsrNoise(self, parameters, calc_gradient=True):
         self.Nvec[:] = 0
@@ -159,6 +206,24 @@ class baseLikelihood(object):
         return
     
     
+    def pta_Nvec(self, parameters, calc_gradient=True):
+        self.Nvec[:] = 0
+        self.Jvec[:] = 0
+        
+        self.Nvec[:] = self.pta.get_ndiag(parameters)[0]
+        
+        if calc_gradient:
+            for key, param in self.ptaparams.items():
+                if key.endswith('efac'):
+                    self.d_Nvec_d_param[self.ptadict[key]] = 2 * self.psr.toaerrs**2 * param
+                
+                elif key.endswith('equad'):
+                    self.d_Nvec_d_param[self.ptadict[key]] = np.ones_like(self.psr.toas) * \
+                                                             2 * np.log(10) * 10**(2*param)
+                                                             
+        return
+    
+    
     def setPb_outliers(self, parameters):
 
         selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -178,13 +243,16 @@ class baseLikelihood(object):
         return
     
     
-    def set_hyperparameters(self, parameters):
-        self.constructPhi(parameters)
-        self.setPsrNoise(parameters)
+    def set_hyperparameters(self, parameters, calc_gradient=True):
+        self.updatePtaParams(parameters)
+        
+        self.constructPhi(parameters, calc_gradient=calc_gradient)
+        self.pta_Nvec(self.ptaparams)
+        # self.setPsrNoise(parameters, calc_gradient=calc_gradient)
         self.setPb_outliers(parameters)
     
     
-    def updateDetSources(self, parameters):
+    def updateDetSources(self, parameters, calc_gradient=True):
         d_L_d_b = np.zeros_like(parameters)
         d_Pr_d_b = np.zeros_like(parameters)
         self.outlier_sig_dict = dict()
@@ -212,76 +280,77 @@ class baseLikelihood(object):
                 elif signal['stype'] == 'jittermode_xi':
                     self.detresiduals -= cython_Uj(sparameters, self.psr.Uinds, len(self.detresiduals))
     
-        for ss, signal in enumerate(self.ptasignals):
-            if selection[ss]:
-                sparameters = signal['pstart'].copy()
-                sparameters[signal['bvary']] = parameters[signal['parindex']:signal['parindex']+signal['npars']]
-                pp = signal['pulsarind']
-    
-                if signal['stype'] == 'bwm':
-                    pass
-                elif signal['stype'] == 'psrbwm':
-                    pass
-                elif signal['stype'] == 'timingmodel_xi':
-                    parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
-                    smask = signal['bvary']
-    
-                    d_L_d_xi = np.zeros(self.psr.Mmat_g.shape[1])
-                    if pp not in self.outlier_sig_dict:
-                        self.outlier_sig_dict[pp] = []
-    
-                    d_L_d_b_o = self.psr.Mmat_g.T * (self.detresiduals / self.Nvec)[None, :]
-                    self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
-    
-                    d_L_d_b[parslice] = d_L_d_xi[smask]
-    
-                elif signal['stype'] == 'fouriermode_xi':
-                    parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
-                    smask = signal['bvary']
-                    findex = np.sum(self.npf[:pp])
-                    nfs = self.npf[pp]
-                    phislice = slice(findex, findex+nfs)
-                    phivec = self.Phivec[phislice] + self.Svec[:nfs]
-    
-                    d_L_d_xi = np.zeros(self.psr.Fmat.shape[1])
-                    if pp not in self.outlier_sig_dict:
-                        self.outlier_sig_dict[pp] = []
-    
-                    d_L_d_b_o = self.psr.Fmat.T * (self.detresiduals / self.Nvec)[None, :]
-                    self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
-    
-                    d_Pr_d_xi = -sparameters / phivec
-                    d_L_d_b[parslice] = d_L_d_xi[smask]
-                    d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
-    
-                elif signal['stype'] == 'dmfouriermode_xi':
-                    pass
-                elif signal['stype'] == 'jittermode_xi':
-                    parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
-                    smask = signal['bvary']
-    
-                    d_L_d_xi = np.zeros(self.npu[pp])
-                    if not pp in self.outlier_sig_dict:
-                        self.outlier_sig_dict[pp] = []
-    
-                    d_L_d_b_o = self.psr.Umat.T * (self.detresiduals / self.Nvec)[None, :]
-                    self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
-    
-                    d_Pr_d_xi = -sparameters / self.Jvec
-                    d_L_d_b[parslice] = d_L_d_xi[smask]
-                    d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
+        if calc_gradient:
+            for ss, signal in enumerate(self.ptasignals):
+                if selection[ss]:
+                    sparameters = signal['pstart'].copy()
+                    sparameters[signal['bvary']] = parameters[signal['parindex']:signal['parindex']+signal['npars']]
+                    pp = signal['pulsarind']
+        
+                    if signal['stype'] == 'bwm':
+                        pass
+                    elif signal['stype'] == 'psrbwm':
+                        pass
+                    elif signal['stype'] == 'timingmodel_xi':
+                        parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
+                        smask = signal['bvary']
+        
+                        d_L_d_xi = np.zeros(self.psr.Mmat_g.shape[1])
+                        if pp not in self.outlier_sig_dict:
+                            self.outlier_sig_dict[pp] = []
+        
+                        d_L_d_b_o = self.psr.Mmat_g.T * (self.detresiduals / self.Nvec)[None, :]
+                        self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
+        
+                        d_L_d_b[parslice] = d_L_d_xi[smask]
+        
+                    elif signal['stype'] == 'fouriermode_xi':
+                        parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
+                        smask = signal['bvary']
+                        findex = np.sum(self.npf[:pp])
+                        nfs = self.npf[pp]
+                        phislice = slice(findex, findex+nfs)
+                        phivec = self.Phivec[phislice] + self.Svec[:nfs]
+        
+                        d_L_d_xi = np.zeros(self.psr.Fmat.shape[1])
+                        if pp not in self.outlier_sig_dict:
+                            self.outlier_sig_dict[pp] = []
+        
+                        d_L_d_b_o = self.psr.Fmat.T * (self.detresiduals / self.Nvec)[None, :]
+                        self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
+        
+                        d_Pr_d_xi = -sparameters / phivec
+                        d_L_d_b[parslice] = d_L_d_xi[smask]
+                        d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
+        
+                    elif signal['stype'] == 'dmfouriermode_xi':
+                        pass
+                    elif signal['stype'] == 'jittermode_xi':
+                        parslice = slice(signal['parindex'], signal['parindex']+signal['npars'])
+                        smask = signal['bvary']
+        
+                        d_L_d_xi = np.zeros(self.npu[pp])
+                        if not pp in self.outlier_sig_dict:
+                            self.outlier_sig_dict[pp] = []
+        
+                        d_L_d_b_o = self.psr.Umat.T * (self.detresiduals / self.Nvec)[None, :]
+                        self.outlier_sig_dict[pp].append((parslice, d_L_d_b_o[smask,:]))
+        
+                        d_Pr_d_xi = -sparameters / self.Jvec
+                        d_L_d_b[parslice] = d_L_d_xi[smask]
+                        d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
         
         self.d_L_d_b = d_L_d_b
         self.d_Pr_d_b = d_Pr_d_b
         return
     
     
-    def base_loglikelihood_grad(self, parameters, set_hyper_params=True):
+    def base_loglikelihood_grad(self, parameters, set_hyper_params=True, calc_gradient=True):
 
         if set_hyper_params:
-            self.set_hyperparameters(parameters)
+            self.set_hyperparameters(parameters, calc_gradient=calc_gradient)
             
-            self.updateDetSources(parameters)
+            self.updateDetSources(parameters, calc_gradient=calc_gradient)
     
         d_L_d_b, d_Pr_d_b = self.d_L_d_b, self.d_Pr_d_b
         gradient = np.zeros_like(d_L_d_b)

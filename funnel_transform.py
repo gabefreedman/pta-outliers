@@ -17,8 +17,8 @@ from piccard.choleskyext_omp import cython_dL_update_omp
 
 class funnelLikelihood(baseLikelihood):
     
-    def __init__(self, likob):
-        super(funnelLikelihood, self).__init__(likob)
+    def __init__(self, likob, psr):
+        super(funnelLikelihood, self).__init__(likob, psr)
     
         self.funnelstart = None
         self.funnelmin = None
@@ -59,6 +59,17 @@ class funnelLikelihood(baseLikelihood):
         x = np.atleast_2d(p.copy())
         x[0,self.sr_pslc] = np.dot(self.sr_Li.T, x[0,self.sr_pslc]) + self.sr_mu
         return x.reshape(p.shape)    
+    
+    
+    def multi_full_backward(self, p):
+        # Hacky way to fix when I backward transform all 20000+ samples at once
+        # Note this will ONLY work for 2d arrays with more than one column
+        x = np.atleast_2d(p.copy())
+        for ii, xx in enumerate(x):
+            self.funnel_transformation(xx)
+            x[ii,self.sr_pslc] = np.dot(self.sr_Li.T, x[ii,self.sr_pslc]) + self.sr_mu
+        return x.reshape(p.shape)
+            
     
     
     def transformedBounds(self):
@@ -149,10 +160,10 @@ class funnelLikelihood(baseLikelihood):
         
     
     
-    def funnel_transformation(self, parameters, set_hyper_params=True):
+    def funnel_transformation(self, parameters, set_hyper_params=True, calc_gradient=True):
 
         if set_hyper_params:
-            self.set_hyperparameters(parameters)
+            self.set_hyperparameters(parameters, calc_gradient=calc_gradient)
         
         self.sr_pslc = self.get_par_psr_sigma_inds()
     

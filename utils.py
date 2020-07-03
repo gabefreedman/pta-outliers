@@ -225,3 +225,33 @@ def custom_likelihood(pta, psr, params):
     ln_likelihood += 0.5 * (np.dot(TNr, expval) - logdet_sigma - logdet_phi)
     return ln_likelihood
 
+
+
+def load_pta(psr):
+    
+    efac = parameter.Uniform(0.001, 5.0)
+    equad = parameter.Uniform(-10.0, -4.0)
+    # ecorr = parameter.Uniform(-10.0, -4.0)
+    
+    selection = selections.Selection(selections.no_selection)
+    
+    ef = white_signals.MeasurementNoise(efac=efac, selection=selection)
+    eq = white_signals.EquadNoise(log10_equad=equad, selection=selection)
+    # ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=selection)
+    
+    log10_A = parameter.Uniform(-20.0, -10.0)
+    gamma = parameter.Uniform(0.02, 6.98)
+    
+    # define powerlaw PSD and red noise signal
+    pl = utils.powerlaw(log10_A=log10_A, gamma=gamma)
+    rn = gp_signals.FourierBasisGP(pl, components=30, name='rn')
+    
+    # linearized timing model
+    tm = gp_signals.TimingModel(use_svd=False)
+    
+    s = ef + eq + rn + tm
+    model = [s(psr)]
+    pta = signal_base.PTA(model)
+    
+    return pta
+
