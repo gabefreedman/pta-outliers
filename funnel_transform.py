@@ -17,8 +17,8 @@ from piccard.choleskyext_omp import cython_dL_update_omp
 
 class funnelLikelihood(baseLikelihood):
     
-    def __init__(self, likob, psr):
-        super(funnelLikelihood, self).__init__(likob, psr)
+    def __init__(self, likob):
+        super(funnelLikelihood, self).__init__(likob)
     
         self.funnelstart = None
         self.funnelmin = None

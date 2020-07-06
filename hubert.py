@@ -12,23 +12,14 @@ import numpy as np
 
 from piccard.jitterext import cython_Uj
 
-from enterprise.signals.gp_priors import powerlaw as pl
-from enterprise.signals.gp_bases import createfourierdesignmatrix_red
-from utils import load_pta
-
 
 class baseLikelihood(object):
 
-    def __init__(self, likob, psr):
+    def __init__(self, likob):
 
         self.likob = likob
-        self.pta = load_pta(psr)
         
-        self.pulsar = psr
-        self.toas = self.pulsar.toas
-        
-        self.npsrs = len(self.pta.pulsars)
-        self.pname = self.pta.pulsars[0]
+        self.npsrs = len(self.likob.ptapsrs)
         self.psr = likob.ptapsrs[0]
         self.ptasignals = likob.ptasignals
         self.pardes = likob.pardes
@@ -64,26 +55,9 @@ class baseLikelihood(object):
         self.basepmax = likob.likob.likob.pmax
         self.basepstart = likob.likob.likob.pstart
         
-        # Below here are attributes related to enterprise PTA object
-        # These will eventually phase out the piccard attrs
-        self.ptapulsar = self.pta.pulsars[0]
-        self.ptaparams = {self.pname + '_efac': 1.0,
-                          self.pname + '_log10_equad': -6.5,
-                          self.pname + '_rn_log10_A': -14.5,
-                          self.pname + '_rn_gamma': 3.5}
-        
-        self.ptadict = {self.pname + '_efac': 0,
-                        self.pname + '_log10_equad': 1,
-                        self.pname + '_rn_log10_A': 2,
-                        self.pname + '_rn_gamma': 3}
-        
 
         self.clearLikob()
 
-
-    def updatePtaParams(self, parameters):
-        for key, value in self.ptadict.items():
-            self.ptaparams[key] = parameters[value]
 
 
     def clearLikob(self):
@@ -137,25 +111,6 @@ class baseLikelihood(object):
                         if signal['bvary'][col]:
                             self.d_Phivec_d_param[signal['parindex']+col] = d_mat[:,col]
 
-
-    def pta_Phi(self, parameters, calc_gradient=True, ncomponents=30):
-        self.Phivec[:] = 0
-        self.Thetavec[:] = 0
-        
-        log10A = self.ptaparams[self.pname + '_rn_log10_A']
-        gamma = self.ptaparams[self.pname + '_rn_gamma']
-        sTmax = self.toas.max()
-        nfreq = ncomponents
-        _, Ffreqs = createfourierdesignmatrix_red(self.toas)
-        
-        pcd = pl(Ffreqs, log10_A=log10A, gamma=gamma)
-        self.Phivec[:2*nfreq] += pcd
-        
-        if calc_gradient:
-            d_mat = d_powerlaw(log10A, gamma, sTmax, Ffreqs)
-            print(d_mat)
-        
-        return
     
 
     def setPsrNoise(self, parameters, calc_gradient=True):
@@ -206,24 +161,6 @@ class baseLikelihood(object):
         return
     
     
-    def pta_Nvec(self, parameters, calc_gradient=True):
-        self.Nvec[:] = 0
-        self.Jvec[:] = 0
-        
-        self.Nvec[:] = self.pta.get_ndiag(parameters)[0]
-        
-        if calc_gradient:
-            for key, param in self.ptaparams.items():
-                if key.endswith('efac'):
-                    self.d_Nvec_d_param[self.ptadict[key]] = 2 * self.psr.toaerrs**2 * param
-                
-                elif key.endswith('equad'):
-                    self.d_Nvec_d_param[self.ptadict[key]] = np.ones_like(self.psr.toas) * \
-                                                             2 * np.log(10) * 10**(2*param)
-                                                             
-        return
-    
-    
     def setPb_outliers(self, parameters):
 
         selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -244,11 +181,10 @@ class baseLikelihood(object):
     
     
     def set_hyperparameters(self, parameters, calc_gradient=True):
-        self.updatePtaParams(parameters)
+        # self.updatePtaParams(parameters)
         
         self.constructPhi(parameters, calc_gradient=calc_gradient)
-        self.pta_Nvec(self.ptaparams)
-        # self.setPsrNoise(parameters, calc_gradient=calc_gradient)
+        self.setPsrNoise(parameters, calc_gradient=calc_gradient)
         self.setPb_outliers(parameters)
     
     
