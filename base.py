@@ -8,6 +8,7 @@ Created on Sun Jul  5 20:09:02 2020
 
 
 import numpy as np
+from collections import OrderedDict
 
 from enterprise.pulsar import Pulsar
 import enterprise.signals.parameter as parameter
@@ -38,6 +39,7 @@ class ptaLikelihood(object):
         self.tm_sig = None
         
         self.nfreqcomps = 30
+        self.Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
         
         self.Nvec = np.zeros(len(self.psr.toas))
         self.d_Nvec_d_param = dict()
@@ -46,20 +48,54 @@ class ptaLikelihood(object):
         self.d_Phivec_d_param = dict()
         
         
-        self.ptaparams = {self.pname + '_efac': 1.0,
-                          self.pname + '_log10_equad': -6.5,
-                          self.pname + '_rn_log10_A': -14.5,
-                          self.pname + '_rn_gamma': 3.51}
+        self.ptaparams = dict()
         
-        self.ptadict = {self.pname + '_efac': 0,
-                        self.pname + '_log10_equad': 1,
-                        self.pname + '_rn_log10_A': 2,
-                        self.pname + '_rn_gamma': 3}
+        self.ptadict = dict()
+        
+        self.signals = []
+        
     
     
     def load_pulsar(self, parfile, timfile, ephem='DE436'):
         psr = Pulsar(parfile, timfile, ephem=ephem)
         return psr
+    
+    
+    def loadSignals(self, incEfac=True, incEquad=True, incRn=True, incOut=True,
+                    incTiming=True, incFourier=True, incJitter=False):
+        if incEfac:
+            self.signals.append(self.add_efac())
+        if incEquad:
+            self.signals.append(self.add_equad())
+        if incRn:
+            self.signals.append(self.add_rn())
+        if incOut:
+            self.signals.append(self.add_outlier())
+        if incTiming:
+            self.signals.append(self.add_timingmodel())
+        if incFourier:
+            self.signals.append(self.add_fourier())
+        if incJitter:
+            pass
+        
+        index = 0
+        for ii, sig in enumerate(self.signals):
+            sig['pmin'] = np.array(sig['pmin'])
+            sig['pmax'] = np.array(sig['pmax'])
+            sig['pstart'] = np.array(sig['pstart'])
+            sig['index'] = index
+            sig['msk'] = slice(sig['index'], sig['index']+sig['numpars'])
+            index += sig['numpars']
+        
+        for sig in self.signals:
+            if sig['type'] == 'rn':
+                self.ptaparams.update(dict(zip(sig['name'], sig['pstart'])))
+            else:
+                self.ptaparams[sig['name']] = sig['pstart'][0]
+    
+        for ii, key in enumerate(self.ptaparams.keys()):
+            if key not in ['timingmodel', 'fouriermode', 'jittermode']:
+                self.ptadict[key] = ii
     
     
     def updateParams(self, parameters):
@@ -70,13 +106,30 @@ class ptaLikelihood(object):
     def add_efac(self):
         efac = parameter.Uniform(0.001, 5.0)
         ef = white_signals.MeasurementNoise(efac=efac, selection=self.selection)
-        return ef(self.psr)
+        newsignal = OrderedDict({'type': 'efac',
+                                 'name': self.pname + '_efac',
+                                 'pmin': [0.001],
+                                 'pmax': [5.0],
+                                 'pstart': [1.0],
+                                 'interval': [True],
+                                 'numpars': 1})
+        
+        self.efac_sig = ef(self.psr)
+        return newsignal
     
     
     def add_equad(self):
         equad = parameter.Uniform(-10.0, -4.0)
         eq = white_signals.EquadNoise(log10_equad=equad, selection=self.selection)
-        return eq(self.psr)
+        newsignal = OrderedDict({'type': 'equad',
+                                 'name': self.pname + '_log10_equad',
+                                 'pmin': [-10.0],
+                                 'pmax': [-4.0],
+                                 'pstart': [-6.5],
+                                 'interval': [True],
+                                 'numpars': 1})
+        self.equad_sig = eq(self.psr)
+        return newsignal
     
     
     def add_ecorr(self):
@@ -90,19 +143,61 @@ class ptaLikelihood(object):
         gamma = parameter.Uniform(0.02, 6.98)
         pl = utils.powerlaw(log10_A=log10_A, gamma=gamma)
         rn = gp_signals.FourierBasisGP(pl, components=self.nfreqcomps, name='rn')
-        return rn(self.psr)
+        newsignal = OrderedDict({'type': 'rn',
+                                 'name': [self.pname + '_rn_log10_A', self.pname + '_rn_gamma'],
+                                 'pmin': [-20.0, 0.02],
+                                 'pmax': [-10.0, 6.98],
+                                 'pstart': [-14.5, 3.51],
+                                 'interval': [True, True],
+                                 'numpars': 2})
+        self.rn_sig = rn(self.psr)
+        return newsignal
     
     
     def add_timingmodel(self):
         tm = gp_signals.TimingModel(use_svd=False)
-        return tm(self.psr)
+        npars = self.psr.Mmat.shape[1]
+        newsignal = OrderedDict({'type': 'timingmodel',
+                                 'name': 'timingmodel',
+                                 'pmin': [-1.0e6]*npars,
+                                 'pmax': [1.0e6]*npars,
+                                 'pstart': [1.0e-10]*npars,
+                                 'interval': [False]*npars,
+                                 'numpars': npars})
+        self.tm_sig = tm(self.psr)
+        return newsignal
+    
+    
+    def add_fourier(self):
+        npars = 2 * self.nfreqcomps
+        newsignal = OrderedDict({'type': 'fouriermode',
+                                 'name': 'fouriermode',
+                                 'pmin': [-1.0e6]*npars,
+                                 'pmax': [1.0e6]*npars,
+                                 'pstart': [1.0e-9]*npars,
+                                 'interval': [False]*npars,
+                                 'numpars': npars})
+        
+        return newsignal
+        
+    
+    
+    def add_outlier(self):
+        newsignal = OrderedDict({'type': 'outlier',
+                                 'name': self.pname + '_outlierprob',
+                                 'pmin': [0.0],
+                                 'pmax': [1.0],
+                                 'pstart': [0.001],
+                                 'interval': [True],
+                                 'numpars': 1})
+        return newsignal
     
     
     def setWhiteNoise(self, calc_gradient=True):
         self.Nvec[:] = 0
         
-        ef = self.add_efac()
-        eq = self.add_equad()
+        ef = self.efac_sig
+        eq = self.equad_sig
         
         self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
         
@@ -120,16 +215,15 @@ class ptaLikelihood(object):
     def setPhi(self, calc_gradient=True):
         self.Phivec[:] = 0
         
-        rn = self.add_rn()
+        rn = self.rn_sig
         log10A = self.ptaparams[self.pname + '_rn_log10_A']
         gamma = self.ptaparams[self.pname + '_rn_gamma']
         sTmax = self.psr.toas.max() - self.psr.toas.min()
-        _, Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
         
         self.Phivec[:] = rn.get_phi(self.ptaparams)
         
         if calc_gradient:
-            d_mat = d_powerlaw(log10A, gamma, sTmax, Ffreqs)
+            d_mat = d_powerlaw(log10A, gamma, sTmax, self.Ffreqs)
             for key, param in self.ptaparams.items():
                 if key.endswith('log10_A'):
                     self.d_Phivec_d_param[self.ptadict[key]] = d_mat[:,0]
@@ -139,11 +233,21 @@ class ptaLikelihood(object):
         return
     
     
+    def setOutliers(self):
+        for key, param in self.ptaparams.items():
+            if key.endswith('outlierprob'):
+                self.outlier_prob = param
+                self.d_Pb_ind = self.ptadict[key]
+        
+        return
+    
+    
     def set_hyperparameters(self, parameters, calc_gradient=True):
-        self.updateParams(parameters)
+        # self.updateParams(parameters)
         
         self.setPhi(calc_gradient=calc_gradient)
         self.setWhiteNoise(calc_gradient=calc_gradient)
+        self.setOutliers()
         
 
 
