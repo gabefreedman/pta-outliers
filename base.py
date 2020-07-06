@@ -8,6 +8,7 @@ Created on Sun Jul  5 20:09:02 2020
 
 
 import numpy as np
+import scipy.linalg as sl
 from collections import OrderedDict
 
 from enterprise.pulsar import Pulsar
@@ -41,6 +42,8 @@ class ptaLikelihood(object):
         self.nfreqcomps = 30
         self.Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
         
+        self.Mmat_g, _, _ = sl.svd(self.psr.Mmat, full_matrices=False)
+        
         self.Nvec = np.zeros(len(self.psr.toas))
         self.d_Nvec_d_param = dict()
         
@@ -56,7 +59,7 @@ class ptaLikelihood(object):
         
     
     
-    def load_pulsar(self, parfile, timfile, ephem='DE436'):
+    def load_pulsar(self, parfile, timfile, ephem='DE405'):
         psr = Pulsar(parfile, timfile, ephem=ephem)
         return psr
     
@@ -240,6 +243,25 @@ class ptaLikelihood(object):
                 self.d_Pb_ind = self.ptadict[key]
         
         return
+    
+    
+    def setDetSources(self, parameters, calc_gradient=True):
+        d_L_d_b = np.zeros_like(parameters)
+        d_Pr_d_b = np.zeros_like(parameters)
+        self.outlier_sig_dict = dict()
+        
+        self.detresiduals = self.psr.residuals.copy()
+        
+        for ii, sig in enumerate(self.signals):
+            sparams = parameters[sig['msk']]
+            print(sparams)
+            
+            if sig['type'] == 'bwm':
+                pass
+            elif sig['type'] == 'timingmodel':
+                self.detresiduals -= np.dot(self.Mmat_g, sparams)
+            elif sig['type'] == 'fouriermode':
+                self.detresiduals -= np.dot(self.Fmat, sparams)
     
     
     def set_hyperparameters(self, parameters, calc_gradient=True):
