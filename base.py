@@ -56,6 +56,7 @@ class ptaLikelihood(object):
         self.ptadict = dict()
         
         self.signals = []
+        self.loadSignals()
         
     
     
@@ -254,7 +255,6 @@ class ptaLikelihood(object):
         
         for ii, sig in enumerate(self.signals):
             sparams = parameters[sig['msk']]
-            print(sparams)
             
             if sig['type'] == 'bwm':
                 pass
@@ -262,6 +262,38 @@ class ptaLikelihood(object):
                 self.detresiduals -= np.dot(self.Mmat_g, sparams)
             elif sig['type'] == 'fouriermode':
                 self.detresiduals -= np.dot(self.Fmat, sparams)
+        
+        if calc_gradient:
+            pulsarind = 0
+            if pulsarind not in self.outlier_sig_dict:
+                self.outlier_sig_dict[pulsarind] = []
+            for ii, sig in enumerate(self.signals):
+                parslice = sig['msk']
+                sparams = parameters[parslice]
+                
+                if sig['type'] == 'bwm':
+                    pass
+                elif sig['type'] == 'timingmodel':
+                    d_L_d_xi = np.zeros(self.Mmat_g.shape[1])
+                    
+                    d_L_d_b_o = self.Mmat_g.T * (self.detresiduals / self.Nvec)[None, :]
+                    self.outlier_sig_dict[pulsarind].append((parslice, d_L_d_b_o))
+                    
+                    d_L_d_b[parslice] = d_L_d_xi
+                elif sig['type'] == 'fouriermode':
+                    d_L_d_xi = np.zeros(self.Fmat.shape[1])
+                    phivec = self.Phivec.copy()
+                    
+                    d_L_d_b_o = self.Fmat.T * (self.detresiduals / self.Nvec)[None, :]
+                    self.outlier_sig_dict[pulsarind].append((parslice, d_L_d_b_o))
+                    
+                    d_Pr_d_xi = -sparams / phivec
+                    d_L_d_b[parslice] = d_L_d_xi
+                    d_Pr_d_b[parslice] = d_Pr_d_xi
+        
+        self.d_L_d_b = d_L_d_b
+        self.d_Pr_d_b = d_Pr_d_b
+        return
     
     
     def set_hyperparameters(self, parameters, calc_gradient=True):
