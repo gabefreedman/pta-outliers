@@ -14,6 +14,8 @@ from collections import OrderedDict
 from enterprise.pulsar import Pulsar
 import enterprise.signals.parameter as parameter
 
+import libstempo as lt
+
 from enterprise.signals import selections
 from enterprise.signals import signal_base
 from enterprise.signals import white_signals
@@ -32,6 +34,10 @@ class ptaLikelihood(object):
         self.psr = self.load_pulsar(parfile, timfile)
         self.pname = self.psr.name
         self.selection = selections.Selection(selections.no_selection)
+        
+        self.ltpsr = lt.tempopulsar(parfile, timfile)
+        self.F0 = self.ltpsr['F0'].val
+        self.P0 = 1.0 / self.F0
         
         self.efac_sig = None
         self.equad_sig = None
@@ -241,7 +247,7 @@ class ptaLikelihood(object):
         for key, param in self.ptaparams.items():
             if key.endswith('outlierprob'):
                 self.outlier_prob = param
-                self.d_Pb_ind = self.ptadict[key]
+                self.d_Pb_ind = [self.ptadict[key]]
         
         return
     
@@ -302,6 +308,84 @@ class ptaLikelihood(object):
         self.setPhi(calc_gradient=calc_gradient)
         self.setWhiteNoise(calc_gradient=calc_gradient)
         self.setOutliers()
+    
+    
+    def base_loglikelihood_grad(self, parameters, set_hyper_params=True, calc_gradient=True):
+        
+        if set_hyper_params:
+            self.set_hyperparameters(parameters, calc_gradient=calc_gradient)
+            self.setDetSources(parameters, calc_gradient=calc_gradient)
+        
+        d_L_d_b, d_Pr_d_b = self.d_L_d_b, self.d_Pr_d_b
+        gradient = np.zeros_like(d_L_d_b)
+        
+        bBb = np.zeros_like(0, dtype=float)
+        ldB = np.zeros_like(0, dtype=float)
+        logl_outlier = np.zeros_like(0, dtype=float)
+        
+        P0 = self.P0
+        Pb = self.outlier_prob
+        
+        lln = self.detresiduals**2 / self.Nvec
+        lld = np.log(self.Nvec) + np.log(2*np.pi)
+        logL0 = -0.5*lln -0.5*lld
+        bigL0 = (1. - Pb) * np.exp(logL0)
+        bigL = bigL0 + Pb/P0
+        logl_outlier += np.sum(np.log(bigL))
+        
+        for pslc, d_L_d_b_o in self.outlier_sig_dict[0]:
+            gradient[pslc] += np.sum(d_L_d_b_o * bigL0[None,:]/bigL[None,:], axis=1)
+        
+        for pbind in self.d_Pb_ind:
+            gradient[pbind] += np.sum((-np.exp(logL0)+1.0/P0)/bigL)
+        
+        for key, d_Nvec_d_p in self.d_Nvec_d_param.items():
+            d_L_d_b_o = 0.5*(self.detresiduals**2 * d_Nvec_d_p / self.Nvec**2 - d_Nvec_d_p / self.Nvec)
+            gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
+        
+        if 'fouriermode' in self.ptaparams.keys():
+            fsig = [sig for sig in self.signals if sig['type']=='fouriermode'][0]
+            pslc = fsig['msk']
+
+            bsqr = parameters[pslc]**2
+            phivec = self.Phivec # + Svec[fslc]
+
+            bBb += np.sum(bsqr / phivec)
+            ldB += np.sum(np.log(phivec))
+
+            gradient[pslc] += d_Pr_d_b[pslc]
+
+            for key, d_Phivec_d_p in self.d_Phivec_d_param.items():
+                gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+                gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+            
+        if 'dmfouriermode' in self.ptaparams.keys():
+            pass
+
+        if 'jittermode' in self.ptaparams.keys():
+            npus = self.npu[0]
+            ind = self.psr.jitterind
+            pslc = slice(ind, ind+npus)
+
+            bsqr = parameters[pslc]**2
+            jvec = self.Jvec
+
+            bBb += np.sum(bsqr / jvec)
+            ldB += np.sum(np.log(jvec))
+            
+            gradient[pslc] += d_Pr_d_b[pslc]
+
+            # Gradient for Thetavec hyper-parameters
+            for key, d_Jvec_d_p in self.d_Jvec_d_param.items():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                # Determinant
+                gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+
+        ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
+        
+        return ll, gradient
         
 
 
