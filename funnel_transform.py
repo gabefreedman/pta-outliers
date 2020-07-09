@@ -102,7 +102,7 @@ class funnelLikelihood(baseLikelihood):
         if self.psr.jitterind is not None:
             slc = np.append(slc, np.arange(self.psr.jitterind,
                     self.psr.jitterind + self.npu))
-        
+
         return slc
     
     

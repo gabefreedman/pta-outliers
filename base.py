@@ -45,10 +45,17 @@ class ptaLikelihood(object):
         self.rn_sig = None
         self.tm_sig = None
         
+        self.basepmin = None
+        self.basepmax = None
+        self.basepstart = None
+        
         self.nfreqcomps = 30
         self.Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
         
         self.Mmat_g, _, _ = sl.svd(self.psr.Mmat, full_matrices=False)
+        self.Zmat = None
+        self.ZNZ = None
+        self.ZNyvec = None
         
         self.Nvec = np.zeros(len(self.psr.toas))
         self.d_Nvec_d_param = dict()
@@ -62,7 +69,11 @@ class ptaLikelihood(object):
         self.ptadict = dict()
         
         self.signals = []
+        
         self.loadSignals()
+        self.setBounds()
+        self.setZmat()
+        self.setFunnelAuxiliary()
         
     
     
@@ -106,6 +117,40 @@ class ptaLikelihood(object):
         for ii, key in enumerate(self.ptaparams.keys()):
             if key not in ['timingmodel', 'fouriermode', 'jittermode']:
                 self.ptadict[key] = ii
+    
+    
+    def setZmat(self):
+        if 'timingmodel' in self.ptaparams.keys():
+            Zmat = self.Mmat_g.copy()
+        if 'fouriermode' in self.ptaparams.keys():
+            Zmat = np.append(Zmat, self.Fmat, axis=1)
+        if 'jittermode' in self.ptaparams.keys():
+            pass
+        
+        self.Zmat = Zmat
+    
+    
+    def setFunnelAuxiliary(self):
+        Nvec = self.psr.toaerrs**2
+        ZNyvec = np.dot(self.Zmat.T, self.psr.residuals / Nvec)
+        ZNZ = np.dot(self.Zmat.T / Nvec, self.Zmat)
+        
+        self.ZNZ = ZNZ
+        self.ZNyvec = ZNyvec
+    
+    
+    def setBounds(self):
+        pmin = []
+        pmax = []
+        pstart = []
+        for sig in self.signals:
+            pmin.extend(sig['pmin'])
+            pmax.extend(sig['pmax'])
+            pstart.extend(sig['pstart'])
+        
+        self.basepmin = np.array(pmin)
+        self.basepmax = np.array(pmax)
+        self.basepstart = np.array(pstart)
     
     
     def updateParams(self, parameters):
