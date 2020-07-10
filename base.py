@@ -17,7 +17,6 @@ import enterprise.signals.parameter as parameter
 import libstempo as lt
 
 from enterprise.signals import selections
-from enterprise.signals import signal_base
 from enterprise.signals import white_signals
 from enterprise.signals import gp_signals
 from enterprise.signals import utils
@@ -389,7 +388,7 @@ class ptaLikelihood(object):
             gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
         
         if 'fouriermode' in self.ptaparams.keys():
-            fsig = [sig for sig in self.signals if sig['type']=='fouriermode'][0]
+            fsig = next(sig for sig in self.signals if sig['type']=='fouriermode')
             pslc = fsig['msk']
 
             bsqr = parameters[pslc]**2
