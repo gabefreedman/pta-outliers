@@ -199,7 +199,85 @@ class funnel(ptaLikelihood):
         self.log_jacob = log_jacob
         self.funnel_gradient = gradient
         
+        
+    def dxdp_nondiag(self, parameters, ll_grad, set_hyper_params=True):
+            
+        if set_hyper_params:
+            self.set_hyperparameters(parameters)
+        
+        if not hasattr(self, "fnl_Sigma"):
+            raise ValueError("Auxilliary Funnel Transform quantities not set!")
+            return
+        
+        ll_grad2 = np.atleast_2d(ll_grad)
+        extra_grad = np.zeros_like(ll_grad2)
+        extra_grad[:, :] = np.copy(ll_grad2)
+        #pslc_tot = self.get_par_psr_sigma_inds(ii, psr)
+        pslc_tot = self.fnlslc
+        ll_grad2_psr = ll_grad2[:, pslc_tot]
+        
+        extra_grad[:, pslc_tot] = np.dot(self.fnl_Li, ll_grad2_psr.T).T
+        
+        if 'fouriermode' in self.ptaparams.keys():
+            
+            for key, d_Phivec_d_p in self.d_Phivec_d_param.items():
+                BdB = np.zeros(len(self.fnl_Sigma))
+                BdB[self.Zmask_F] = \
+                        self.fnl_Beta_inv[self.Zmask_F]**2 * d_Phivec_d_p
+    
+                # dxdp for Sigma
+                dxdhp = np.dot(self.fnl_Li.T, np.dot(self.fnl_dL_M[:,self.Zmask_F],
+                        BdB[self.Zmask_F]))
+                extra_grad[:, key] += np.sum(
+                        dxdhp[None,:] * ll_grad2_psr[:,:], axis=1)
+    
+                # dxdp for mu
+                WBWv = np.dot(self.fnl_Sigma[:,self.Zmask_F],
+                        self.fnl_Beta_inv[self.Zmask_F]**2 *
+                        d_Phivec_d_p * self.fnl_mu[self.Zmask_F])
+                extra_grad[:, key] += np.sum(ll_grad2_psr * 
+                        WBWv[None, :], axis=1)
+        
+        if 'jittermode' in self.ptaparams.keys():
+            
+            for key, d_Jvec_d_p in self.d_Jvec_d_param.items():
+                BdB = np.zeros(len(self.fnl_Sigma))
+                BdB[self.Zmask_U] = \
+                        self.sr_Beta_inv[self.Zmask_U]**2 * \
+                        d_Jvec_d_p
+                # dxdp for Sigma
+                dxdhp = np.dot(self.fnl_Li.T, np.dot(self.fnl_dL_M[:,self.Zmask_U],
+                        BdB[self.psr.Zmask_U_only]))
+                extra_grad[:, key] += np.sum(
+                        dxdhp[None,:] * ll_grad2_psr[:,:], axis=1)
+    
+                # dxdp for mu
+                WBWv = np.dot(self.fnl_Sigma[:,self.Zmask_U],
+                        self.fnl_Beta_inv[self.Zmask_U]**2 *
+                        d_Jvec_d_p * self.fnl_mu[self.Zmask_U])
+                extra_grad[:, key] += np.sum(ll_grad2_psr * 
+                        WBWv[None, :], axis=1)
+                
             
             
+        return extra_grad.reshape(ll_grad.shape)
+        
+        
+    def funnel_loglikelihood_grad(self, parameters):
+        
+            self.funnelTransform(parameters)
+            basepars = self.full_backward(parameters)
+            
+            ll, ll_grad = self.base_loglikelihood_grad(basepars)
+            lj, lj_grad = self.log_jacob, self.funnel_gradient
+            
+            lp = ll + lj
+            lp_grad = lj_grad + self.dxdp_nondiag(parameters, ll_grad)
+            
+            return lp, lp_grad
+
+
+
+                
 
 
