@@ -347,7 +347,7 @@ class ptaLikelihood(object):
     
     
     def set_hyperparameters(self, parameters, calc_gradient=True):
-        # self.updateParams(parameters)
+        self.updateParams(parameters)
         
         self.setPhi(calc_gradient=calc_gradient)
         self.setWhiteNoise(calc_gradient=calc_gradient)
