@@ -34,7 +34,7 @@ class funnel(ptaLikelihood):
         
         pstart = self.basepstart.copy()
         
-        for ii, sig in enumerate(self.signals):
+        for key, sig in self.signals.items():
             if sig['type'] in lowlevelpars:
                 msk = sig['msk']
                 pstart[msk] = 0.1
@@ -46,20 +46,16 @@ class funnel(ptaLikelihood):
         slc = np.array([], dtype=np.int)
         
         if 'timingmodel' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='timingmodel')
-            pslc = fsig['msk']
+            pslc = self.signals['timingmodel']['msk']
             slc = np.append(slc, np.arange(pslc.start, pslc.stop))
         if 'fouriermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='fouriermode')
-            pslc = fsig['msk']
+            pslc = self.signals['fouriermode']['msk']
             slc = np.append(slc, np.arange(pslc.start, pslc.stop))
         if 'dmfouriermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='dmfouriermode')
-            pslc = fsig['msk']
+            pslc = self.signals['dmfouriermode']['msk']
             slc = np.append(slc, np.arange(pslc.start, pslc.stop))
         if 'jittermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='jittermode')
-            pslc = fsig['msk']
+            pslc = self.signals['jittermode']['msk']
             slc = np.append(slc, np.arange(pslc.start, pslc.stop))
         
         return slc
@@ -70,19 +66,16 @@ class funnel(ptaLikelihood):
         Beta_inv_diag = np.zeros(len(self.ZNZ))
         
         if 'fouriermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='fouriermode')
-            pslc = fsig['msk']
+            pslc = self.signals['fouriermode']['msk']
             phivec = self.Phivec
             
             Beta_inv_diag[pslc] = 1.0 / phivec
         
         if 'dmfouriermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='dmfouriermode')
-            pslc = fsig['msk']
+            pslc = self.signals['dmfouriermode']['msk']
         
         if 'jittermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='jittermode')
-            pslc = fsig['msk']
+            pslc = self.signals['jittermode']['msk']
         
         return Beta_inv_diag
     

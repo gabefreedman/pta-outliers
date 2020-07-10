@@ -67,7 +67,7 @@ class ptaLikelihood(object):
         
         self.ptadict = dict()
         
-        self.signals = []
+        self.signals = dict()
         
         self.loadSignals()
         self.setBounds()
@@ -84,22 +84,22 @@ class ptaLikelihood(object):
     def loadSignals(self, incEfac=True, incEquad=True, incRn=True, incOut=True,
                     incTiming=True, incFourier=True, incJitter=False):
         if incEfac:
-            self.signals.append(self.add_efac())
+            self.signals.update(self.add_efac())
         if incEquad:
-            self.signals.append(self.add_equad())
+            self.signals.update(self.add_equad())
         if incRn:
-            self.signals.append(self.add_rn())
+            self.signals.update(self.add_rn())
         if incOut:
-            self.signals.append(self.add_outlier())
+            self.signals.update(self.add_outlier())
         if incTiming:
-            self.signals.append(self.add_timingmodel())
+            self.signals.update(self.add_timingmodel())
         if incFourier:
-            self.signals.append(self.add_fourier())
+            self.signals.update(self.add_fourier())
         if incJitter:
             pass
         
         index = 0
-        for ii, sig in enumerate(self.signals):
+        for key, sig in self.signals.items():
             sig['pmin'] = np.array(sig['pmin'])
             sig['pmax'] = np.array(sig['pmax'])
             sig['pstart'] = np.array(sig['pstart'])
@@ -107,7 +107,7 @@ class ptaLikelihood(object):
             sig['msk'] = slice(sig['index'], sig['index']+sig['numpars'])
             index += sig['numpars']
         
-        for sig in self.signals:
+        for key, sig in self.signals.items():
             if sig['type'] == 'rn':
                 self.ptaparams.update(dict(zip(sig['name'], sig['pstart'])))
             else:
@@ -142,7 +142,7 @@ class ptaLikelihood(object):
         pmin = []
         pmax = []
         pstart = []
-        for sig in self.signals:
+        for key, sig in self.signals.items():
             pmin.extend(sig['pmin'])
             pmax.extend(sig['pmax'])
             pstart.extend(sig['pstart'])
@@ -169,7 +169,7 @@ class ptaLikelihood(object):
                                  'numpars': 1})
         
         self.efac_sig = ef(self.psr)
-        return newsignal
+        return {'efac': newsignal}
     
     
     def add_equad(self):
@@ -183,7 +183,7 @@ class ptaLikelihood(object):
                                  'interval': [True],
                                  'numpars': 1})
         self.equad_sig = eq(self.psr)
-        return newsignal
+        return {'equad': newsignal}
     
     
     def add_ecorr(self):
@@ -205,7 +205,7 @@ class ptaLikelihood(object):
                                  'interval': [True, True],
                                  'numpars': 2})
         self.rn_sig = rn(self.psr)
-        return newsignal
+        return {'rn': newsignal}
     
     
     def add_timingmodel(self):
@@ -219,7 +219,7 @@ class ptaLikelihood(object):
                                  'interval': [False]*npars,
                                  'numpars': npars})
         self.tm_sig = tm(self.psr)
-        return newsignal
+        return {'timingmodel': newsignal}
     
     
     def add_fourier(self):
@@ -232,7 +232,7 @@ class ptaLikelihood(object):
                                  'interval': [False]*npars,
                                  'numpars': npars})
         
-        return newsignal
+        return {'fouriermode': newsignal}
         
     
     
@@ -244,7 +244,7 @@ class ptaLikelihood(object):
                                  'pstart': [0.001],
                                  'interval': [True],
                                  'numpars': 1})
-        return newsignal
+        return {'outlier': newsignal}
     
     
     def setWhiteNoise(self, calc_gradient=True):
@@ -303,7 +303,7 @@ class ptaLikelihood(object):
         
         self.detresiduals = self.psr.residuals.copy()
         
-        for ii, sig in enumerate(self.signals):
+        for key, sig in self.signals.items():
             sparams = parameters[sig['msk']]
             
             if sig['type'] == 'bwm':
@@ -317,7 +317,7 @@ class ptaLikelihood(object):
             pulsarind = 0
             if pulsarind not in self.outlier_sig_dict:
                 self.outlier_sig_dict[pulsarind] = []
-            for ii, sig in enumerate(self.signals):
+            for key, sig in self.signals.items():
                 parslice = sig['msk']
                 sparams = parameters[parslice]
                 
@@ -388,8 +388,7 @@ class ptaLikelihood(object):
             gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
         
         if 'fouriermode' in self.ptaparams.keys():
-            fsig = next(sig for sig in self.signals if sig['type']=='fouriermode')
-            pslc = fsig['msk']
+            pslc = self.signals['fouriermode']['msk']
 
             bsqr = parameters[pslc]**2
             phivec = self.Phivec # + Svec[fslc]
