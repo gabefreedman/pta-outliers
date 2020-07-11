@@ -27,6 +27,7 @@ class interval(funnel):
     def initBounds(self):
         self.a = self.funnelmin
         self.b = self.funnelmax
+        self.pstart = self.forward(self.funnelstart)
         
     
     def hypMask(self):

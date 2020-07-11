@@ -16,12 +16,16 @@ import enterprise.signals.parameter as parameter
 
 import libstempo as lt
 
+from piccard.jitterext import cython_Uj
+
 from enterprise.signals import selections
 from enterprise.signals import white_signals
 from enterprise.signals import gp_signals
 from enterprise.signals import utils
 
 from enterprise.signals.gp_bases import createfourierdesignmatrix_red
+from enterprise.signals.utils import create_quantization_matrix
+from enterprise.signals.utils import quant2ind
 
 
 class ptaLikelihood(object):
@@ -51,6 +55,10 @@ class ptaLikelihood(object):
         self.nfreqcomps = 30
         self.Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
         
+        self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
+        self.Uind = quant2ind(self.Umat)
+        self.Uindslc = None
+        
         self.Mmat_g, _, _ = sl.svd(self.psr.Mmat, full_matrices=False)
         self.Zmat = None
         self.ZNZ = None
@@ -58,6 +66,8 @@ class ptaLikelihood(object):
         
         self.Nvec = np.zeros(len(self.psr.toas))
         self.d_Nvec_d_param = dict()
+        self.Jvec = np.zeros(len(self.weights))
+        self.d_Jvec_d_param = dict()
         
         self.Phivec = np.zeros(2 * self.nfreqcomps)
         self.d_Phivec_d_param = dict()
@@ -72,6 +82,7 @@ class ptaLikelihood(object):
         self.loadSignals()
         self.setBounds()
         self.setZmat()
+        self.setUindslc()
         self.setFunnelAuxiliary()
         
     
@@ -81,12 +92,14 @@ class ptaLikelihood(object):
         return psr
     
     
-    def loadSignals(self, incEfac=True, incEquad=True, incRn=True, incOut=True,
-                    incTiming=True, incFourier=True, incJitter=False):
+    def loadSignals(self, incEfac=True, incEquad=True, incEcorr=True, incRn=True, incOut=True,
+                    incTiming=True, incFourier=True, incJitter=True):
         if incEfac:
             self.signals.update(self.add_efac())
         if incEquad:
             self.signals.update(self.add_equad())
+        if incEcorr:
+            self.signals.update(self.add_ecorr())
         if incRn:
             self.signals.update(self.add_rn())
         if incOut:
@@ -96,7 +109,7 @@ class ptaLikelihood(object):
         if incFourier:
             self.signals.update(self.add_fourier())
         if incJitter:
-            pass
+            self.signals.update(self.add_jitter())
         
         index = 0
         for key, sig in self.signals.items():
@@ -127,6 +140,14 @@ class ptaLikelihood(object):
             pass
         
         self.Zmat = Zmat
+    
+    
+    def setUindslc(self):
+        Uinds = []
+        for ind in self.Uind:
+            Uinds.append((ind.start, ind.stop))
+        
+        self.Uindslc = np.array(Uinds, dtype=np.int)
     
     
     def setFunnelAuxiliary(self):
@@ -189,7 +210,15 @@ class ptaLikelihood(object):
     def add_ecorr(self):
         ecorr = parameter.Uniform(-10.0, -4.0)
         ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=self.selection)
-        return ec(self.psr)
+        newsignal = OrderedDict({'type': 'ecorr',
+                                 'name': self.pname + '_basis_ecorr_log10_ecorr',
+                                 'pmin': [-10.0],
+                                 'pmax': [-4.0],
+                                 'pstart': [-6.5],
+                                 'interval': [True],
+                                 'numpars': 1})
+        self.ecorr_sig = ec(self.psr)
+        return {'ecorr': newsignal}
     
     
     def add_rn(self):
@@ -233,6 +262,19 @@ class ptaLikelihood(object):
                                  'numpars': npars})
         
         return {'fouriermode': newsignal}
+    
+    
+    def add_jitter(self):
+        npars = len(self.Jvec)
+        newsignal = OrderedDict({'type': 'jittermode',
+                                 'name': 'jittermode',
+                                 'pmin': [-1.0e6]*npars,
+                                 'pmax': [1.0e6]*npars,
+                                 'pstart': [1.0e-9]*npars,
+                                 'interval': [False]*npars,
+                                 'numpars': npars})
+        
+        return {'jittermode': newsignal}
         
     
     
@@ -249,11 +291,14 @@ class ptaLikelihood(object):
     
     def setWhiteNoise(self, calc_gradient=True):
         self.Nvec[:] = 0
+        self.Jvec[:] = 0
         
         ef = self.efac_sig
         eq = self.equad_sig
+        ec = self.ecorr_sig
         
         self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
+        self.Jvec[:] = ec.get_phi(self.ptaparams)
         
         if calc_gradient:
             for key, param in self.ptaparams.items():
@@ -262,6 +307,10 @@ class ptaLikelihood(object):
                 elif key.endswith('equad'):
                     self.d_Nvec_d_param[self.ptadict[key]] = np.ones_like(self.psr.toas) * \
                                                              2 * np.log(10) * 10**(2*param)
+                elif key.endswith('ecorr'):
+                    self.d_Jvec_d_param[self.ptadict[key]] = self.weights * \
+                                                             2*np.log(10) * \
+                                                             10**(2*param)
         return
         
         
@@ -312,6 +361,8 @@ class ptaLikelihood(object):
                 self.detresiduals -= np.dot(self.Mmat_g, sparams)
             elif sig['type'] == 'fouriermode':
                 self.detresiduals -= np.dot(self.Fmat, sparams)
+            elif sig['type'] == 'jittermode':
+                self.detresiduals -= cython_Uj(sparams, self.Uindslc, len(self.detresiduals))
         
         if calc_gradient:
             pulsarind = 0
@@ -338,6 +389,15 @@ class ptaLikelihood(object):
                     self.outlier_sig_dict[pulsarind].append((parslice, d_L_d_b_o))
                     
                     d_Pr_d_xi = -sparams / phivec
+                    d_L_d_b[parslice] = d_L_d_xi
+                    d_Pr_d_b[parslice] = d_Pr_d_xi
+                elif sig['type'] == 'jittermode':
+                    d_L_d_xi = np.zeros(self.Umat.shape[1])
+                    
+                    d_L_d_b_o = self.Umat.T * (self.detresiduals / self.Nvec)[None, :]
+                    self.outlier_sig_dict[pulsarind].append((parslice, d_L_d_b_o))
+                    
+                    d_Pr_d_xi = -sparams / self.Jvec
                     d_L_d_b[parslice] = d_L_d_xi
                     d_Pr_d_b[parslice] = d_Pr_d_xi
         
@@ -406,9 +466,7 @@ class ptaLikelihood(object):
             pass
 
         if 'jittermode' in self.ptaparams.keys():
-            npus = self.npu[0]
-            ind = self.psr.jitterind
-            pslc = slice(ind, ind+npus)
+            pslc = self.signals['jittermode']['msk']
 
             bsqr = parameters[pslc]**2
             jvec = self.Jvec
@@ -418,12 +476,8 @@ class ptaLikelihood(object):
             
             gradient[pslc] += d_Pr_d_b[pslc]
 
-            # Gradient for Thetavec hyper-parameters
             for key, d_Jvec_d_p in self.d_Jvec_d_param.items():
-                # Inner product
                 gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
-
-                # Determinant
                 gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
