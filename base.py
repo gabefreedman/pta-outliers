@@ -137,7 +137,7 @@ class ptaLikelihood(object):
         if 'fouriermode' in self.ptaparams.keys():
             Zmat = np.append(Zmat, self.Fmat, axis=1)
         if 'jittermode' in self.ptaparams.keys():
-            pass
+            Zmat = np.append(Zmat, self.Umat, axis=1)
         
         self.Zmat = Zmat
     

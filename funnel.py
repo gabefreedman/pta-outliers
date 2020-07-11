@@ -140,10 +140,10 @@ class funnel(ptaLikelihood):
             Beta_inv_diag[self.Zmask_F] = 1.0 / phivec
         
         if 'dmfouriermode' in self.ptaparams.keys():
-            pslc = self.signals['dmfouriermode']['msk']
+            pass
         
         if 'jittermode' in self.ptaparams.keys():
-            pslc = self.signals['jittermode']['msk']
+            Beta_inv_diag[self.Zmask_U] = 1.0 / self.Jvec
         
         return Beta_inv_diag
     
