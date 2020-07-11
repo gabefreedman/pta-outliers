@@ -243,11 +243,11 @@ class funnel(ptaLikelihood):
             for key, d_Jvec_d_p in self.d_Jvec_d_param.items():
                 BdB = np.zeros(len(self.fnl_Sigma))
                 BdB[self.Zmask_U] = \
-                        self.sr_Beta_inv[self.Zmask_U]**2 * \
+                        self.fnl_Beta_inv[self.Zmask_U]**2 * \
                         d_Jvec_d_p
                 # dxdp for Sigma
                 dxdhp = np.dot(self.fnl_Li.T, np.dot(self.fnl_dL_M[:,self.Zmask_U],
-                        BdB[self.psr.Zmask_U_only]))
+                        BdB[self.Zmask_U]))
                 extra_grad[:, key] += np.sum(
                         dxdhp[None,:] * ll_grad2_psr[:,:], axis=1)
     
