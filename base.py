@@ -36,7 +36,7 @@ class ptaLikelihood(object):
         
         self.psr = self.load_pulsar(parfile, timfile)
         self.pname = self.psr.name
-        self.selection = selections.Selection(selections.no_selection)
+        self.selection = selections.Selection(selections.by_backend)
         
         self.ltpsr = lt.tempopulsar(parfile, timfile)
         self.F0 = self.ltpsr['F0'].val
@@ -179,46 +179,57 @@ class ptaLikelihood(object):
     
     
     def add_efac(self):
+        efac_dct = dict()
         efac = parameter.Uniform(0.001, 5.0)
         ef = white_signals.MeasurementNoise(efac=efac, selection=self.selection)
-        newsignal = OrderedDict({'type': 'efac',
-                                 'name': self.pname + '_efac',
-                                 'pmin': [0.001],
-                                 'pmax': [5.0],
-                                 'pstart': [1.0],
-                                 'interval': [True],
-                                 'numpars': 1})
-        
         self.efac_sig = ef(self.psr)
-        return {'efac': newsignal}
+        for param in self.efac_sig.param_names:
+            newsignal = OrderedDict({'type': 'efac',
+                                     'name': param,
+                                     'pmin': [0.001],
+                                     'pmax': [5.0],
+                                     'pstart': [1.0],
+                                     'interval': [True],
+                                     'numpars': 1})
+            efac_dct.update({param : newsignal})
+        
+        return efac_dct
     
     
     def add_equad(self):
+        equad_dct = dict()
         equad = parameter.Uniform(-10.0, -4.0)
         eq = white_signals.EquadNoise(log10_equad=equad, selection=self.selection)
-        newsignal = OrderedDict({'type': 'equad',
-                                 'name': self.pname + '_log10_equad',
-                                 'pmin': [-10.0],
-                                 'pmax': [-4.0],
-                                 'pstart': [-6.5],
-                                 'interval': [True],
-                                 'numpars': 1})
         self.equad_sig = eq(self.psr)
-        return {'equad': newsignal}
+        for param in self.equad_sig.param_names:
+            newsignal = OrderedDict({'type': 'equad',
+                                     'name': param,
+                                     'pmin': [-10.0],
+                                     'pmax': [-4.0],
+                                     'pstart': [-6.5],
+                                     'interval': [True],
+                                     'numpars': 1})
+            equad_dct.update({param : newsignal})
+        
+        return equad_dct
     
     
     def add_ecorr(self):
+        ecorr_dct = dict()
         ecorr = parameter.Uniform(-10.0, -4.0)
         ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=self.selection)
-        newsignal = OrderedDict({'type': 'ecorr',
-                                 'name': self.pname + '_basis_ecorr_log10_ecorr',
-                                 'pmin': [-10.0],
-                                 'pmax': [-4.0],
-                                 'pstart': [-6.5],
-                                 'interval': [True],
-                                 'numpars': 1})
         self.ecorr_sig = ec(self.psr)
-        return {'ecorr': newsignal}
+        for param in self.ecorr_sig.param_names:
+            newsignal = OrderedDict({'type': 'ecorr',
+                                     'name': param,
+                                     'pmin': [-10.0],
+                                     'pmax': [-4.0],
+                                     'pstart': [-6.5],
+                                     'interval': [True],
+                                     'numpars': 1})
+            ecorr_dct.update({param : newsignal})
+        
+        return ecorr_dct
     
     
     def add_rn(self):
