@@ -211,6 +211,8 @@ class baseLikelihood(object):
                     self.detresiduals -= np.dot(self.psr.Mmat_g, sparameters)
                 elif signal['stype'] == 'fouriermode_xi':
                     self.detresiduals -= np.dot(self.psr.Fmat, sparameters)
+                    print(np.dot(self.psr.Fmat, sparameters))
+                    print(sparameters)
                 elif signal['stype'] == 'dmfouriermode_xi':
                     pass
                 elif signal['stype'] == 'jittermode_xi':

@@ -58,6 +58,7 @@ class ptaLikelihood(object):
         self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
         self.Uind = quant2ind(self.Umat)
         self.Uindslc = None
+        self.setUindslc()
         
         self.Mmat_g, _, _ = sl.svd(self.psr.Mmat, full_matrices=False)
         self.Zmat = None
@@ -66,7 +67,7 @@ class ptaLikelihood(object):
         
         self.Nvec = np.zeros(len(self.psr.toas))
         self.d_Nvec_d_param = dict()
-        self.Jvec = np.zeros(len(self.weights))
+        self.Jvec = np.zeros(self.Umat.shape[1])
         self.d_Jvec_d_param = dict()
         
         self.Phivec = np.zeros(2 * self.nfreqcomps)
@@ -82,7 +83,6 @@ class ptaLikelihood(object):
         self.loadSignals()
         self.setBounds()
         self.setZmat()
-        self.setUindslc()
         self.setFunnelAuxiliary()
         
     
@@ -147,7 +147,15 @@ class ptaLikelihood(object):
         for ind in self.Uind:
             Uinds.append((ind.start, ind.stop))
         
-        self.Uindslc = np.array(Uinds, dtype=np.int)
+        self.smallepochs = []
+        for ii, elem in enumerate(self.Uind):
+            if elem.stop - elem.start < 4:
+                self.smallepochs.append(ii)
+        
+        Uindslc = np.array(Uinds, dtype=np.int)
+        Umatslc = np.delete(self.Umat, self.smallepochs, axis=1)
+        self.Uindslc = np.delete(Uindslc, self.smallepochs, axis=0)
+        self.Umat = Umatslc
     
     
     def setFunnelAuxiliary(self):
@@ -183,14 +191,16 @@ class ptaLikelihood(object):
         efac = parameter.Uniform(0.001, 5.0)
         ef = white_signals.MeasurementNoise(efac=efac, selection=self.selection)
         self.efac_sig = ef(self.psr)
-        for param in self.efac_sig.param_names:
+        for ii, param in enumerate(self.efac_sig.param_names):
+            Nvec = self.psr.toaerrs**2 * self.efac_sig._masks[ii]
             newsignal = OrderedDict({'type': 'efac',
                                      'name': param,
                                      'pmin': [0.001],
                                      'pmax': [5.0],
                                      'pstart': [1.0],
                                      'interval': [True],
-                                     'numpars': 1})
+                                     'numpars': 1,
+                                     'Nvec': Nvec})
             efac_dct.update({param : newsignal})
         
         return efac_dct
@@ -201,14 +211,16 @@ class ptaLikelihood(object):
         equad = parameter.Uniform(-10.0, -4.0)
         eq = white_signals.EquadNoise(log10_equad=equad, selection=self.selection)
         self.equad_sig = eq(self.psr)
-        for param in self.equad_sig.param_names:
+        for ii, param in enumerate(self.equad_sig.param_names):
+            Nvec = np.ones_like(self.psr.toaerrs) * self.equad_sig._masks[ii]
             newsignal = OrderedDict({'type': 'equad',
                                      'name': param,
                                      'pmin': [-10.0],
                                      'pmax': [-4.0],
                                      'pstart': [-6.5],
                                      'interval': [True],
-                                     'numpars': 1})
+                                     'numpars': 1,
+                                     'Nvec': Nvec})
             equad_dct.update({param : newsignal})
         
         return equad_dct
@@ -219,14 +231,17 @@ class ptaLikelihood(object):
         ecorr = parameter.Uniform(-10.0, -4.0)
         ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=self.selection)
         self.ecorr_sig = ec(self.psr)
-        for param in self.ecorr_sig.param_names:
+        for ii, param in enumerate(self.ecorr_sig.param_names):
+            Nvec = np.ones_like(self.psr.toaerrs) * self.ecorr_sig._masks[ii]
+            Jvec = np.array(np.sum(Nvec * self.Umat.T, axis=1) > 0.0, dtype=np.double)
             newsignal = OrderedDict({'type': 'ecorr',
                                      'name': param,
                                      'pmin': [-10.0],
                                      'pmax': [-4.0],
                                      'pstart': [-6.5],
                                      'interval': [True],
-                                     'numpars': 1})
+                                     'numpars': 1,
+                                     'Jvec': Jvec})
             ecorr_dct.update({param : newsignal})
         
         return ecorr_dct
@@ -309,19 +324,25 @@ class ptaLikelihood(object):
         ec = self.ecorr_sig
         
         self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
-        self.Jvec[:] = ec.get_phi(self.ptaparams)
+        fullJvec = ec.get_phi(self.ptaparams)
+        self.Jvec[:] = np.delete(fullJvec, self.smallepochs, axis=0)
         
         if calc_gradient:
-            for key, param in self.ptaparams.items():
-                if key.endswith('efac'):
-                    self.d_Nvec_d_param[self.ptadict[key]] = 2 * self.psr.toaerrs**2 * param
-                elif key.endswith('equad'):
-                    self.d_Nvec_d_param[self.ptadict[key]] = np.ones_like(self.psr.toas) * \
-                                                             2 * np.log(10) * 10**(2*param)
-                elif key.endswith('ecorr'):
-                    self.d_Jvec_d_param[self.ptadict[key]] = self.weights * \
-                                                             2*np.log(10) * \
-                                                             10**(2*param)
+            if ef:
+                for param in ef.param_names:
+                    self.d_Nvec_d_param[self.ptadict[param]] = 2 * \
+                                                               self.signals[param]['Nvec'] * \
+                                                               self.ptaparams[param]
+            if eq:
+                for param in eq.param_names:
+                    self.d_Nvec_d_param[self.ptadict[param]] = self.signals[param]['Nvec'] * \
+                                                               2 * np.log(10) * \
+                                                               10**(2*self.ptaparams[param])
+            if ec:
+                for param in ec.param_names:
+                    self.d_Jvec_d_param[self.ptadict[param]] = self.signals[param]['Jvec'] * \
+                                                               2 * np.log(10) * \
+                                                               10**(2*self.ptaparams[param])
         return
         
         
@@ -372,6 +393,8 @@ class ptaLikelihood(object):
                 self.detresiduals -= np.dot(self.Mmat_g, sparams)
             elif sig['type'] == 'fouriermode':
                 self.detresiduals -= np.dot(self.Fmat, sparams)
+                print(np.dot(self.Fmat, sparams))
+                print(sparams)
             elif sig['type'] == 'jittermode':
                 self.detresiduals -= cython_Uj(sparams, self.Uindslc, len(self.detresiduals))
         

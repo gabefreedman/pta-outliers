@@ -91,7 +91,7 @@ class whitenedLikelihood(interval):
     
     def __init__(self, likob, parameters, hessian):
         self.likob = likob
-        self.mu = parameters
+        self.mu = parameters.copy()
         
         self.calc_invsqrt(hessian)
         
