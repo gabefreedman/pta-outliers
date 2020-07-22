@@ -211,8 +211,6 @@ class baseLikelihood(object):
                     self.detresiduals -= np.dot(self.psr.Mmat_g, sparameters)
                 elif signal['stype'] == 'fouriermode_xi':
                     self.detresiduals -= np.dot(self.psr.Fmat, sparameters)
-                    print(np.dot(self.psr.Fmat, sparameters))
-                    print(sparameters)
                 elif signal['stype'] == 'dmfouriermode_xi':
                     pass
                 elif signal['stype'] == 'jittermode_xi':
@@ -364,6 +362,9 @@ class baseLikelihood(object):
                 gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
+        print(np.sum(logl_outlier))
+        print(np.sum(bBb))
+        print(np.sum(ldB))
 
         return ll, gradient
 

@@ -16,6 +16,7 @@ import enterprise.signals.parameter as parameter
 
 import libstempo as lt
 
+import piccard as pic
 from piccard.jitterext import cython_Uj
 
 from enterprise.signals import selections
@@ -34,13 +35,14 @@ class ptaLikelihood(object):
         self.parfile = parfile
         self.timfile = timfile
         
-        self.psr = self.load_pulsar(parfile, timfile)
-        self.pname = self.psr.name
-        self.selection = selections.Selection(selections.by_backend)
-        
         self.ltpsr = lt.tempopulsar(parfile, timfile)
+        self.ephem = self.ltpsr.ephemeris
         self.F0 = self.ltpsr['F0'].val
         self.P0 = 1.0 / self.F0
+        
+        self.psr = self.load_pulsar(parfile, timfile)
+        self.pname = self.psr.name
+        self.selection = selections.Selection(selections.no_selection)
         
         self.efac_sig = None
         self.equad_sig = None
@@ -53,14 +55,17 @@ class ptaLikelihood(object):
         self.basepstart = None
         
         self.nfreqcomps = 30
-        self.Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
+        Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
+        self.Fmat = np.zeros_like(Fmat)
+        self.Fmat[:, 1::2] = Fmat[:, ::2]
+        self.Fmat[:, ::2] = Fmat[:, 1::2]
         
         self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
         self.Uind = quant2ind(self.Umat)
         self.Uindslc = None
         self.setUindslc()
         
-        self.Mmat_g, _, _ = sl.svd(self.psr.Mmat, full_matrices=False)
+        self.Mmat_g = self.gibbs_set_design()
         self.Zmat = None
         self.ZNZ = None
         self.ZNyvec = None
@@ -87,9 +92,23 @@ class ptaLikelihood(object):
         
     
     
-    def load_pulsar(self, parfile, timfile, ephem='DE405'):
-        psr = Pulsar(parfile, timfile, ephem=ephem)
+    def load_pulsar(self, parfile, timfile):
+        toas = np.double(np.array(self.ltpsr.toas())-53000.0)*86400
+        residuals = np.double(self.ltpsr.residuals())
+        toaerrs = np.double(1e-6*self.ltpsr.toaerrs)
+        
+        isort, iisort = pic.ptafuncs.argsortTOAs(toas, self.ltpsr.flagvals('be'), which='jitterext')
+        
+        psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
+        psr._isort = isort
+        
+        psr._toas = toas
+        psr._residuals = residuals
+        psr._toaerrs = toaerrs
+        
+        
         return psr
+
     
     
     def loadSignals(self, incEfac=True, incEquad=True, incEcorr=True, incRn=True, incOut=True,
@@ -129,6 +148,74 @@ class ptaLikelihood(object):
         for ii, key in enumerate(self.ptaparams.keys()):
             if key not in ['timingmodel', 'fouriermode', 'jittermode']:
                 self.ptadict[key] = ii
+                
+                
+    def gibbs_set_design(self, gibbsmodel=['rednoise', 'design', 'jitter']):
+        F_list = ['Offset', \
+                'LAMBDA', 'BETA', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', \
+                'ELONG', 'ELAT', 'PMELONG', 'PMELAT', 'TASC', 'EPS1', 'EPS2', \
+                'XDOT', 'PBDOT', 'KOM', 'KIN', 'EDOT', 'MTOT', 'SHAPMAX', \
+                'GAMMA', 'X2DOT', 'XPBDOT', 'E2DOT', 'OM_1', 'A1_1', 'XOMDOT', \
+                'PMLAMBDA', 'PMBETA', 'PX', 'PB', 'A1', 'E', 'ECC', \
+                'T0', 'OM', 'OMDOT', 'SINI', 'A1', 'M2']
+        F_front_list = ['JUMP', 'F']
+        D_list = ['DM', 'DM1', 'DM2', 'DM3', 'DM4']
+        U_list = []
+
+        Mmask_F = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
+        Mmask_D = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
+        Mmask_U = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
+        Mmat_g = np.zeros(self.psr.Mmat.shape)
+        for ii, par in enumerate(self.psr.fitpars):
+            incrn = False
+            for par_front in F_front_list:
+                if par[:len(par_front)] == par_front:
+                    incrn = True
+
+            if (par in F_list or incrn) and 'rednoise' in gibbsmodel:
+                Mmask_F[ii] = True
+
+            if par in D_list and 'dm' in gibbsmodel:
+                Mmask_D[ii] = True
+
+            if par in U_list and 'jitter' in gibbsmodel:
+                Mmask_U[ii] = True
+
+        if np.sum(np.logical_and(Mmask_F, Mmask_D)) > 0 or \
+                np.sum(np.logical_and(Mmask_F, Mmask_U)) > 0 or \
+                np.sum(np.logical_and(Mmask_D, Mmask_U)) > 0:
+            raise ValueError("Conditional lists cannot overlap")
+
+
+        Mmask_M = np.array([1]*Mmat_g.shape[1], dtype=np.bool)
+        if 'rednoise' in gibbsmodel:
+            Mmask_M = np.logical_and(Mmask_M, \
+                    np.logical_not(Mmask_F))
+        if 'dm' in gibbsmodel:
+            Mmask_M = np.logical_and(Mmask_M, \
+                    np.logical_not(Mmask_D))
+        if 'jitter' in gibbsmodel:
+            Mmask_M = np.logical_and(Mmask_M, \
+                    np.logical_not(Mmask_U))
+
+        # Create orthogonals for all of these
+        if np.sum(Mmask_F) > 0:
+            U, s, Vt = sl.svd(self.psr.Mmat[:,Mmask_F], full_matrices=False)
+            Mmat_g[:, Mmask_F] = U
+
+        if np.sum(Mmask_D) > 0:
+            U, s, Vt = sl.svd(self.psr.Mmat[:,Mmask_D], full_matrices=False)
+            Mmat_g[:, Mmask_D] = U
+
+        if np.sum(Mmask_U) > 0:
+            U, s, Vt = sl.svd(self.Mmat[:,Mmask_U], full_matrices=False)
+            Mmat_g[:, Mmask_U] = U
+
+        if np.sum(Mmask_M) > 0:
+            U, s, Vt = sl.svd(self.psr.Mmat[:,Mmask_M], full_matrices=False)
+            Mmat_g[:, Mmask_M] = U
+        
+        return Mmat_g
     
     
     def setZmat(self):
@@ -393,8 +480,6 @@ class ptaLikelihood(object):
                 self.detresiduals -= np.dot(self.Mmat_g, sparams)
             elif sig['type'] == 'fouriermode':
                 self.detresiduals -= np.dot(self.Fmat, sparams)
-                print(np.dot(self.Fmat, sparams))
-                print(sparams)
             elif sig['type'] == 'jittermode':
                 self.detresiduals -= cython_Uj(sparams, self.Uindslc, len(self.detresiduals))
         
@@ -515,6 +600,9 @@ class ptaLikelihood(object):
                 gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
+        print(np.sum(logl_outlier))
+        print(np.sum(bBb))
+        print(np.sum(ldB))
         
         return ll, gradient
         
