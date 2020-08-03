@@ -16,7 +16,6 @@ import enterprise.signals.parameter as parameter
 
 import libstempo as lt
 
-import piccard as pic
 from piccard.jitterext import cython_Uj
 
 from enterprise.signals import selections
@@ -60,7 +59,6 @@ class ptaLikelihood(object):
         self.Fmat = np.zeros_like(Fmat)
         self.Fmat[:, 1::2] = Fmat[:, ::2]
         self.Fmat[:, ::2] = Fmat[:, 1::2]
-        self.Fmat, self.Ffreqs = pic.ptafuncs.fourierdesignmatrix(self.psr.toas, 2*self.nfreqcomps)
         
         self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
         self.Uind = quant2ind(self.Umat)
@@ -447,9 +445,24 @@ class ptaLikelihood(object):
         eq = self.equad_sig
         ec = self.ecorr_sig
         
+        '''
         self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
         fullJvec = ec.get_phi(self.ptaparams)
         self.Jvec[:] = np.delete(fullJvec, self.smallepochs, axis=0)
+        '''
+        
+        if ef:
+            for param in ef.param_names:
+                pefac = self.ptaparams[param]
+                self.Nvec += self.signals[param]['Nvec'] * pefac**2
+        if eq:
+            for param in eq.param_names:
+                pequadsqr = 10**(2*self.ptaparams[param])
+                self.Nvec += self.signals[param]['Nvec'] * pequadsqr
+        if ec:
+            for param in ec.param_names:
+                pequadsqr = 10**(2*self.ptaparams[param])
+                self.Jvec += self.signals[param]['Jvec'] * pequadsqr
         
         if calc_gradient:
             if ef:
