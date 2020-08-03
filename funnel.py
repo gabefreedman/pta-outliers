@@ -200,7 +200,7 @@ class funnel(ptaLikelihood):
         self.funnel_gradient = gradient
         
         
-    def dxdp_nondiag(self, parameters, ll_grad, set_hyper_params=True):
+    def dxdp_nondiag(self, parameters, ll_grad, set_hyper_params=False):
             
         if set_hyper_params:
             self.set_hyperparameters(parameters)

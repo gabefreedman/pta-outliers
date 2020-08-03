@@ -42,7 +42,8 @@ class ptaLikelihood(object):
         
         self.psr = self.load_pulsar(parfile, timfile)
         self.pname = self.psr.name
-        self.selection = selections.Selection(selections.no_selection)
+        self.selection = selections.Selection(selections.by_backend)
+        # self.selection = selections.Selection(selections.no_selection)
         
         self.efac_sig = None
         self.equad_sig = None
@@ -59,6 +60,7 @@ class ptaLikelihood(object):
         self.Fmat = np.zeros_like(Fmat)
         self.Fmat[:, 1::2] = Fmat[:, ::2]
         self.Fmat[:, ::2] = Fmat[:, 1::2]
+        self.Fmat, self.Ffreqs = pic.ptafuncs.fourierdesignmatrix(self.psr.toas, 2*self.nfreqcomps)
         
         self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
         self.Uind = quant2ind(self.Umat)
@@ -97,7 +99,12 @@ class ptaLikelihood(object):
         residuals = np.double(self.ltpsr.residuals())
         toaerrs = np.double(1e-6*self.ltpsr.toaerrs)
         
-        isort, iisort = pic.ptafuncs.argsortTOAs(toas, self.ltpsr.flagvals('be'), which='jitterext')
+        if 'f' in self.ltpsr.flags():
+            flags = self.ltpsr.flagvals('f')
+        else:
+            flags = self.ltpsr.flagvals('be')
+        
+        isort, iisort = self.argsortTOAs(toas, flags)
         
         psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
         psr._isort = isort
@@ -108,6 +115,36 @@ class ptaLikelihood(object):
         
         
         return psr
+    
+    
+    def argsortTOAs(self, toas, flags):
+        U, v = create_quantization_matrix(toas, nmin=1)
+        isort = np.argsort(toas, kind='mergesort')
+        flagvals = list(set(flags))
+        
+        for cc, col in enumerate(U.T):
+            for flag in flagvals:
+                flagmask = (flags[isort] == flag)
+                if np.sum(col[isort][flagmask]) > 1:
+                    colmask = col[isort].astype(np.bool)
+                    epmsk = flagmask[colmask]
+                    epinds = np.flatnonzero(epmsk)
+                    if len(epinds) == epinds[-1] - epinds[0] + 1:
+                            # Keys are exclusively in succession
+                            pass
+                    else:
+                        episort = np.argsort(flagmask[colmask], kind='mergesort')
+                        isort[colmask] = isort[colmask][episort]
+                else:
+                    # Only one element, always ok
+                    pass
+        # Now that we have a correct permutation, also construct the inverse
+        iisort = np.zeros(len(isort), dtype=np.int)
+        for ii, p in enumerate(isort):
+            iisort[p] = ii
+        
+        return isort, iisort
+            
 
     
     
@@ -437,12 +474,13 @@ class ptaLikelihood(object):
     def setPhi(self, calc_gradient=True):
         self.Phivec[:] = 0
         
-        rn = self.rn_sig
+        # rn = self.rn_sig
         log10A = self.ptaparams[self.pname + '_rn_log10_A']
         gamma = self.ptaparams[self.pname + '_rn_gamma']
         sTmax = self.psr.toas.max() - self.psr.toas.min()
         
-        self.Phivec[:] = rn.get_phi(self.ptaparams)
+        # self.Phivec[:] = rn.get_phi(self.ptaparams)
+        self.Phivec[:] = powerlaw(log10A, gamma, sTmax, self.Ffreqs)
         
         if calc_gradient:
             d_mat = d_powerlaw(log10A, gamma, sTmax, self.Ffreqs)
@@ -600,12 +638,14 @@ class ptaLikelihood(object):
                 gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
-        print(np.sum(logl_outlier))
-        print(np.sum(bBb))
-        print(np.sum(ldB))
         
         return ll, gradient
         
+
+
+def powerlaw(lAmp, Si, Tmax, freqs, spy=31557600.0):
+    freqpy = freqs * spy
+    return (10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy**(-Si)
 
 
 def d_powerlaw(lAmp, Si, Tmax, freqs, ntotfreqs=None, nfreqind=None, spy=31557600.0):

@@ -14,87 +14,87 @@ from funnel import funnel
 
 
 class interval(funnel):
-    
+
     def __init__(self, parfile, timfile):
         super(interval, self).__init__(parfile, timfile)
-        
+
         self.msk = None
         self.hypMask()
-        
+
         self.initBounds()
-        
-    
+
+
     def initBounds(self):
         self.a = self.funnelmin
         self.b = self.funnelmax
         self.pstart = self.forward(self.funnelstart)
-        
-    
+
+
     def hypMask(self):
         lowlevelpars = ['timingmodel', 'fouriermode', 'jittermode']
         msk = [True] * len(self.basepstart)
-        for key, sig in self.signals.items():
+        for _, sig in self.signals.items():
             if sig['type'] in lowlevelpars:
                 msk[sig['msk']] = [False] * sig['numpars']
-        
+
         self.msk = np.array(msk)
-    
+
     def forward(self, x):
         p = np.atleast_2d(x.copy())
         posinf, neginf = (self.a == x), (self.b == x)
         m = self.msk & ~(posinf | neginf)
-        p[:,m] = np.log((p[:,m] - self.a[m]) / (self.b[m] - p[:,m]))
-        p[:,posinf] = np.inf
-        p[:,neginf] = -np.inf
+        p[:, m] = np.log((p[:, m] - self.a[m]) / (self.b[m] - p[:, m]))
+        p[:, posinf] = np.inf
+        p[:, neginf] = -np.inf
         return p.reshape(x.shape)
 
 
     def backward(self, p):
         x = np.atleast_2d(p.copy())
         m = self.msk
-        x[:,m] = (self.b[m] - self.a[m]) * np.exp(x[:,m]) / (1 +
-                np.exp(x[:,m])) + self.a[m]
+        x[:, m] = (self.b[m] - self.a[m]) * np.exp(x[:, m]) / (1 +
+                np.exp(x[:, m])) + self.a[m]
         return x.reshape(p.shape)
-    
-    
+
+
     def dxdp(self, p):
         pp = np.atleast_2d(p)
         m = self.msk
         d = np.ones_like(pp)
-        d[:,m] = (self.b[m]-self.a[m])*np.exp(pp[:,m])/(1+np.exp(pp[:,m]))**2
+        d[:, m] = (self.b[m]-self.a[m])*np.exp(pp[:, m])/(1+np.exp(pp[:, m]))**2
         return d.reshape(p.shape)
 
 
     def logjacobian_grad(self, p):
         m = self.msk
-        lj = np.sum( np.log(self.b[m]-self.a[m]) + p[m] -
-                2*np.log(1.0+np.exp(p[m])) )
-    
+        lj = np.sum(np.log(self.b[m]-self.a[m]) + p[m] -
+                    2*np.log(1.0+np.exp(p[m])))
+
         lj_grad = np.zeros_like(p)
         lj_grad[m] = (1 - np.exp(p[m])) / (1 + np.exp(p[m]))
         return lj, lj_grad
 
 
     def full_loglikelihood_grad(self, parameters):
-        
+
         funnelpars = self.backward(parameters)
         ll, ll_grad = self.funnel_loglikelihood_grad(funnelpars)
         lj, lj_grad = self.logjacobian_grad(parameters)
-        
+
         lp = ll + lj
         lp_grad = ll_grad * self.dxdp(parameters) + lj_grad
-        
+
         return lp, lp_grad
 
 
 class whitenedLikelihood(interval):
-    
+
     def __init__(self, likob, parameters, hessian):
         self.likob = likob
         self.mu = parameters.copy()
-        
+
         self.calc_invsqrt(hessian)
-        
+
     def calc_invsqrt(self, hessian):
         try:
             # Try Cholesky
@@ -112,7 +112,7 @@ class whitenedLikelihood(interval):
                 if not np.all(eigval > 0):
                     # Try SVD here? Or just regularize?
                     raise sl.LinAlgError("Eigh thinks hessian is not positive definite")
-                
+
                 self.ch = eigvec * np.sqrt(eigval)
                 self.chi = (eigvec / np.sqrt(eigval)).T
                 self.lj = -0.5*np.sum(np.log(eigval))
@@ -125,26 +125,54 @@ class whitenedLikelihood(interval):
                 self.ch = U * np.sqrt(s) # eigvec * np.sqrt(eigval)
                 self.chi = (U / np.sqrt(s)).T
                 self.lj = -0.5*np.sum(np.log(s))
-    
-    
+
+
     def forward(self, x):
+        """
+        Forward transform the parameter vector to whitened coordinates
+
+        Parameters
+        ----------
+        x : numpy array
+            Input parameter vector
+
+        Returns
+        -------
+        numpy array
+            Whitened vector, same dimensions as `x`
+
+        """
         p = np.atleast_2d(x.copy()) - self.mu
         p = np.dot(self.ch.T, p.T).T
         return p.reshape(x.shape)
-    
-    
-    def backward(self, parameters):
-        x = np.atleast_2d(parameters.copy())
+
+
+    def backward(self, p):
+        """
+        Backward transform whitened parameter vector to original coordinates
+
+        Parameters
+        ----------
+        p : numpy array
+            Whitened parameter vector
+
+        Returns
+        -------
+        numpy array
+            Paramter vector in original coordinates, same dimensions as `p`
+
+        """
+        x = np.atleast_2d(p.copy())
         x = np.dot(self.chi.T, x.T).T + self.mu
-        return x.reshape(parameters.shape)
-    
-    
+        return x.reshape(p.shape)
+
+
     def logjacobian_grad(self, parameters):
         lj = self.lj
         lj_grad = np.zeros_like(parameters)
         return lj, lj_grad
-    
-    
+
+
     def logposterior_grad(self, parameters):
         x = self.backward(parameters)
         lp, lp_grad = self.likob.full_loglikelihood_grad(x)

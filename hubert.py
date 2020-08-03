@@ -362,9 +362,6 @@ class baseLikelihood(object):
                 gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
-        print(np.sum(logl_outlier))
-        print(np.sum(bBb))
-        print(np.sum(ldB))
 
         return ll, gradient
 
