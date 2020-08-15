@@ -42,7 +42,6 @@ class ptaLikelihood(object):
         self.psr = self.load_pulsar(parfile, timfile)
         self.pname = self.psr.name
         self.selection = selections.Selection(selections.by_backend)
-        # self.selection = selections.Selection(selections.no_selection)
         
         self.efac_sig = None
         self.equad_sig = None
@@ -352,6 +351,7 @@ class ptaLikelihood(object):
         ecorr_dct = dict()
         ecorr = parameter.Uniform(-10.0, -4.0)
         ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=self.selection)
+        # ec = white_signals.EcorrKernelNoise(log10_ecorr=ecorr, selection=self.selection)
         self.ecorr_sig = ec(self.psr)
         for ii, param in enumerate(self.ecorr_sig.param_names):
             Nvec = np.ones_like(self.psr.toaerrs) * self.ecorr_sig._masks[ii]
@@ -445,24 +445,18 @@ class ptaLikelihood(object):
         eq = self.equad_sig
         ec = self.ecorr_sig
         
-        '''
-        self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
-        fullJvec = ec.get_phi(self.ptaparams)
-        self.Jvec[:] = np.delete(fullJvec, self.smallepochs, axis=0)
-        '''
         
-        if ef:
-            for param in ef.param_names:
-                pefac = self.ptaparams[param]
-                self.Nvec += self.signals[param]['Nvec'] * pefac**2
-        if eq:
-            for param in eq.param_names:
-                pequadsqr = 10**(2*self.ptaparams[param])
-                self.Nvec += self.signals[param]['Nvec'] * pequadsqr
+        self.Nvec[:] = ef.get_ndiag(self.ptaparams) + eq.get_ndiag(self.ptaparams)
+        
+        # fullJvec = np.array(ec.get_phi(self.ptaparams))
+        # self.Jvec[:] = np.delete(fullJvec, self.smallepochs, axis=0)
+        
+        
         if ec:
             for param in ec.param_names:
                 pequadsqr = 10**(2*self.ptaparams[param])
                 self.Jvec += self.signals[param]['Jvec'] * pequadsqr
+        
         
         if calc_gradient:
             if ef:
@@ -487,13 +481,13 @@ class ptaLikelihood(object):
     def setPhi(self, calc_gradient=True):
         self.Phivec[:] = 0
         
-        # rn = self.rn_sig
+        rn = self.rn_sig
         log10A = self.ptaparams[self.pname + '_rn_log10_A']
         gamma = self.ptaparams[self.pname + '_rn_gamma']
         sTmax = self.psr.toas.max() - self.psr.toas.min()
         
-        # self.Phivec[:] = rn.get_phi(self.ptaparams)
-        self.Phivec[:] = powerlaw(log10A, gamma, sTmax, self.Ffreqs)
+        self.Phivec[:] = rn.get_phi(self.ptaparams)
+        # self.Phivec[:] = powerlaw(log10A, gamma, sTmax, self.Ffreqs)
         
         if calc_gradient:
             d_mat = d_powerlaw(log10A, gamma, sTmax, self.Ffreqs)
