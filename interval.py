@@ -13,10 +13,10 @@ import scipy.linalg as sl
 from funnel import funnel
 
 
-class interval(funnel):
+class Interval(Funnel):
 
     def __init__(self, parfile, timfile):
-        super(interval, self).__init__(parfile, timfile)
+        super(Interval, self).__init__(parfile, timfile)
 
         self.msk = None
         self.hypMask()
@@ -40,6 +40,7 @@ class interval(funnel):
         self.msk = np.array(msk)
 
     def forward(self, x):
+        """Apply interval transformation to parameter vector"""
         p = np.atleast_2d(x.copy())
         posinf, neginf = (self.a == x), (self.b == x)
         m = self.msk & ~(posinf | neginf)
@@ -50,10 +51,11 @@ class interval(funnel):
 
 
     def backward(self, p):
+        """Undo the interval transformation"""
         x = np.atleast_2d(p.copy())
         m = self.msk
-        x[:, m] = (self.b[m] - self.a[m]) * np.exp(x[:, m]) / (1 +
-                np.exp(x[:, m])) + self.a[m]
+        x[:, m] = (self.b[m] - self.a[m]) * np.exp(x[:, m]) \
+                   / (1 + np.exp(x[:, m])) + self.a[m]
         return x.reshape(p.shape)
 
 
@@ -87,7 +89,7 @@ class interval(funnel):
         return lp, lp_grad
 
 
-class whitenedLikelihood(interval):
+class whitenedLikelihood(Interval):
 
     def __init__(self, likob, parameters, hessian):
         self.likob = likob
@@ -102,7 +104,7 @@ class whitenedLikelihood(interval):
 
             # Fast solve
             self.chi = sl.solve_triangular(self.ch, np.eye(len(self.ch)),
-                    trans=0, lower=True)
+                                           trans=0, lower=True)
             self.lj = np.sum(np.log(np.diag(self.chi)))
         except sl.LinAlgError:
             # Cholesky fails. Try eigh
@@ -128,40 +130,14 @@ class whitenedLikelihood(interval):
 
 
     def forward(self, x):
-        """
-        Forward transform the parameter vector to whitened coordinates
-
-        Parameters
-        ----------
-        x : numpy array
-            Input parameter vector
-
-        Returns
-        -------
-        numpy array
-            Whitened vector, same dimensions as `x`
-
-        """
+        """Forward transform the parameter vector to whitened coordinates"""
         p = np.atleast_2d(x.copy()) - self.mu
         p = np.dot(self.ch.T, p.T).T
         return p.reshape(x.shape)
 
 
     def backward(self, p):
-        """
-        Backward transform whitened parameter vector to original coordinates
-
-        Parameters
-        ----------
-        p : numpy array
-            Whitened parameter vector
-
-        Returns
-        -------
-        numpy array
-            Paramter vector in original coordinates, same dimensions as `p`
-
-        """
+        """Backward transform whitened parameters to original coordinates"""
         x = np.atleast_2d(p.copy())
         x = np.dot(self.chi.T, x.T).T + self.mu
         return x.reshape(p.shape)
