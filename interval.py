@@ -10,7 +10,7 @@ Created on Fri Jul 10 10:35:41 2020
 import numpy as np
 import scipy.linalg as sl
 
-from funnel import funnel
+from funnel import Funnel
 
 
 class Interval(Funnel):

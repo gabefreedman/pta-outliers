@@ -1,5 +1,5 @@
-# pta-likelihood
-pta-likelihood is based on, and largely replicates, the pulsar timing Bayesian-inference pipeline of 
+# pta-outliers
+pta-outliers is based on, and largely replicates, the pulsar timing Bayesian-inference pipeline of 
 piccard (https://github.com/vhaasteren/piccard).
 
 This code extracts from piccard the hmcLikelihood object 

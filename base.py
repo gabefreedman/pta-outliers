@@ -9,171 +9,38 @@ Created on Sun Jul  5 20:09:02 2020
 
 import numpy as np
 import scipy.linalg as sl
-from collections import OrderedDict
-
-from enterprise.pulsar import Pulsar
-import enterprise.signals.parameter as parameter
-from enterprise.signals import selections, white_signals, gp_signals, utils
-from enterprise.signals.gp_bases import createfourierdesignmatrix_red
-from enterprise.signals.utils import create_quantization_matrix, quant2ind
-
-import libstempo as lt
 
 from jitterext import cython_Uj
+from pulsar import HierarchicalPTA
+import utils as ut
 
 
-class ptaLikelihood(object):
+class ptaLikelihood(HierarchicalPTA):
 
     def __init__(self, parfile, timfile):
-        self.parfile = parfile
-        self.timfile = timfile
-
-        self.ltpsr = lt.tempopulsar(parfile, timfile)
-        self.ephem = self.ltpsr.ephemeris
-        self.F0 = self.ltpsr['F0'].val
-        self.P0 = 1.0 / self.F0
-
-        self.psr = self.load_pulsar(parfile, timfile)
-        self.pname = self.psr.name
-        self.selection = selections.Selection(selections.by_backend)
-
-        self.efac_sig = None
-        self.equad_sig = None
-        self.ecorr_sig = None
-        self.rn_sig = None
-        self.tm_sig = None
+        super(ptaLikelihood, self).__init__(parfile, timfile)
 
         self.basepmin = None
         self.basepmax = None
         self.basepstart = None
-
-        self.nfreqcomps = 30
-        Fmat, self.Ffreqs = createfourierdesignmatrix_red(self.psr.toas)
-        self.Fmat = np.zeros_like(Fmat)
-        self.Fmat[:, 1::2] = Fmat[:, ::2]
-        self.Fmat[:, ::2] = Fmat[:, 1::2]
-
-        self.Umat, self.weights = create_quantization_matrix(self.psr.toas)
-        self.Uind = quant2ind(self.Umat)
-        self.Uindslc = None
-        self.setUindslc()
 
         self.Mmat_g = self.gibbs_set_design()
         self.Zmat = None
         self.ZNZ = None
         self.ZNyvec = None
 
-        self.Nvec = np.zeros(len(self.psr.toas))
-        self.d_Nvec_d_param = dict()
-        self.Jvec = np.zeros(self.Umat.shape[1])
-        self.d_Jvec_d_param = dict()
+        self.outlier_prob = None
+        self.detresiduals = None
+        self.outlier_sig_dict = dict()
+        self.d_Pb_ind = None
 
-        self.Phivec = np.zeros(2 * self.nfreqcomps)
-        self.d_Phivec_d_param = dict()
+        self.d_L_d_b = None
+        self.d_Pr_d_b = None
 
 
-        self.ptaparams = dict()
-
-        self.ptadict = dict()
-
-        self.signals = dict()
-
-        self.loadSignals()
         self.setBounds()
         self.setZmat()
         self.setFunnelAuxiliary()
-
-
-
-    def load_pulsar(self, parfile, timfile):
-        toas = np.double(np.array(self.ltpsr.toas())-53000.0)*86400
-        residuals = np.double(self.ltpsr.residuals())
-        toaerrs = np.double(1e-6*self.ltpsr.toaerrs)
-
-        if 'f' in self.ltpsr.flags():
-            flags = self.ltpsr.flagvals('f')
-        else:
-            flags = self.ltpsr.flagvals('be')
-
-        isort, _ = self.argsortTOAs(toas, flags)
-
-        psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
-        psr._isort = isort
-
-        psr._toas = toas
-        psr._residuals = residuals
-        psr._toaerrs = toaerrs
-
-
-        return psr
-
-
-    def argsortTOAs(self, toas, flags):
-        U, _ = create_quantization_matrix(toas, nmin=1)
-        isort = np.argsort(toas, kind='mergesort')
-        flagvals = list(set(flags))
-
-        for _, col in enumerate(U.T):
-            for flag in flagvals:
-                flagmask = (flags[isort] == flag)
-                if np.sum(col[isort][flagmask]) > 1:
-                    colmask = col[isort].astype(np.bool)
-                    epmsk = flagmask[colmask]
-                    epinds = np.flatnonzero(epmsk)
-                    if len(epinds) == epinds[-1] - epinds[0] + 1:
-                        # Keys are exclusively in succession
-                        pass
-                    else:
-                        episort = np.argsort(flagmask[colmask], kind='mergesort')
-                        isort[colmask] = isort[colmask][episort]
-                else:
-                    # Only one element, always ok
-                    pass
-        # Now that we have a correct permutation, also construct the inverse
-        iisort = np.zeros(len(isort), dtype=np.int)
-        for ii, p in enumerate(isort):
-            iisort[p] = ii
-
-        return isort, iisort
-
-
-    def loadSignals(self, incEfac=True, incEquad=True, incEcorr=True, incRn=True, incOut=True,
-                    incTiming=True, incFourier=True, incJitter=True):
-        if incEfac:
-            self.signals.update(self.add_efac())
-        if incEquad:
-            self.signals.update(self.add_equad())
-        if incEcorr:
-            self.signals.update(self.add_ecorr())
-        if incRn:
-            self.signals.update(self.add_rn())
-        if incOut:
-            self.signals.update(self.add_outlier())
-        if incTiming:
-            self.signals.update(self.add_timingmodel())
-        if incFourier:
-            self.signals.update(self.add_fourier())
-        if incJitter:
-            self.signals.update(self.add_jitter())
-
-        index = 0
-        for key, sig in self.signals.items():
-            sig['pmin'] = np.array(sig['pmin'])
-            sig['pmax'] = np.array(sig['pmax'])
-            sig['pstart'] = np.array(sig['pstart'])
-            sig['index'] = index
-            sig['msk'] = slice(sig['index'], sig['index']+sig['numpars'])
-            index += sig['numpars']
-
-        for key, sig in self.signals.items():
-            if sig['type'] == 'rn':
-                self.ptaparams.update(dict(zip(sig['name'], sig['pstart'])))
-            else:
-                self.ptaparams[sig['name']] = sig['pstart'][0]
-
-        for ii, key in enumerate(self.ptaparams.keys()):
-            if key not in ['timingmodel', 'fouriermode', 'jittermode']:
-                self.ptadict[key] = ii
 
 
     def gibbs_set_design(self, gibbsmodel=['rednoise', 'design', 'jitter']):
@@ -255,22 +122,6 @@ class ptaLikelihood(object):
         self.Zmat = Zmat
 
 
-    def setUindslc(self):
-        Uinds = []
-        for ind in self.Uind:
-            Uinds.append((ind.start, ind.stop))
-
-        self.smallepochs = []
-        for ii, elem in enumerate(self.Uind):
-            if elem.stop - elem.start < 4:
-                self.smallepochs.append(ii)
-
-        Uindslc = np.array(Uinds, dtype=np.int)
-        Umatslc = np.delete(self.Umat, self.smallepochs, axis=1)
-        self.Uindslc = np.delete(Uindslc, self.smallepochs, axis=0)
-        self.Umat = Umatslc
-
-
     def setFunnelAuxiliary(self):
         Nvec = self.psr.toaerrs**2
         ZNyvec = np.dot(self.Zmat.T, self.psr.residuals / Nvec)
@@ -288,145 +139,15 @@ class ptaLikelihood(object):
             pmin.extend(sig['pmin'])
             pmax.extend(sig['pmax'])
             pstart.extend(sig['pstart'])
-        
+
         self.basepmin = np.array(pmin)
         self.basepmax = np.array(pmax)
         self.basepstart = np.array(pstart)
-    
-    
+
+
     def updateParams(self, parameters):
         for key, value in self.ptadict.items():
             self.ptaparams[key] = parameters[value]
-    
-    
-    def add_efac(self):
-        efac_dct = dict()
-        efac = parameter.Uniform(0.001, 5.0)
-        ef = white_signals.MeasurementNoise(efac=efac, selection=self.selection)
-        self.efac_sig = ef(self.psr)
-        for ii, param in enumerate(self.efac_sig.param_names):
-            Nvec = self.psr.toaerrs**2 * self.efac_sig._masks[ii]
-            newsignal = OrderedDict({'type': 'efac',
-                                     'name': param,
-                                     'pmin': [0.001],
-                                     'pmax': [5.0],
-                                     'pstart': [1.0],
-                                     'interval': [True],
-                                     'numpars': 1,
-                                     'Nvec': Nvec})
-            efac_dct.update({param : newsignal})
-
-        return efac_dct
-
-
-    def add_equad(self):
-        equad_dct = dict()
-        equad = parameter.Uniform(-10.0, -4.0)
-        eq = white_signals.EquadNoise(log10_equad=equad, selection=self.selection)
-        self.equad_sig = eq(self.psr)
-        for ii, param in enumerate(self.equad_sig.param_names):
-            Nvec = np.ones_like(self.psr.toaerrs) * self.equad_sig._masks[ii]
-            newsignal = OrderedDict({'type': 'equad',
-                                     'name': param,
-                                     'pmin': [-10.0],
-                                     'pmax': [-4.0],
-                                     'pstart': [-6.5],
-                                     'interval': [True],
-                                     'numpars': 1,
-                                     'Nvec': Nvec})
-            equad_dct.update({param : newsignal})
-
-        return equad_dct
-
-
-    def add_ecorr(self):
-        ecorr_dct = dict()
-        ecorr = parameter.Uniform(-10.0, -4.0)
-        ec = gp_signals.EcorrBasisModel(log10_ecorr=ecorr, selection=self.selection)
-        # ec = white_signals.EcorrKernelNoise(log10_ecorr=ecorr, selection=self.selection)
-        self.ecorr_sig = ec(self.psr)
-        for ii, param in enumerate(self.ecorr_sig.param_names):
-            Nvec = np.ones_like(self.psr.toaerrs) * self.ecorr_sig._masks[ii]
-            Jvec = np.array(np.sum(Nvec * self.Umat.T, axis=1) > 0.0, dtype=np.double)
-            newsignal = OrderedDict({'type': 'ecorr',
-                                     'name': param,
-                                     'pmin': [-10.0],
-                                     'pmax': [-4.0],
-                                     'pstart': [-6.5],
-                                     'interval': [True],
-                                     'numpars': 1,
-                                     'Jvec': Jvec})
-            ecorr_dct.update({param : newsignal})
-        
-        return ecorr_dct
-    
-    
-    def add_rn(self):
-        log10_A = parameter.Uniform(-20.0, -10.0)
-        gamma = parameter.Uniform(0.02, 6.98)
-        pl = utils.powerlaw(log10_A=log10_A, gamma=gamma)
-        rn = gp_signals.FourierBasisGP(pl, components=self.nfreqcomps, name='rn')
-        newsignal = OrderedDict({'type': 'rn',
-                                 'name': [self.pname + '_rn_log10_A', self.pname + '_rn_gamma'],
-                                 'pmin': [-20.0, 0.02],
-                                 'pmax': [-10.0, 6.98],
-                                 'pstart': [-14.5, 3.51],
-                                 'interval': [True, True],
-                                 'numpars': 2})
-        self.rn_sig = rn(self.psr)
-        return {'rn': newsignal}
-    
-    
-    def add_timingmodel(self):
-        tm = gp_signals.TimingModel(use_svd=False)
-        npars = self.psr.Mmat.shape[1]
-        newsignal = OrderedDict({'type': 'timingmodel',
-                                 'name': 'timingmodel',
-                                 'pmin': [-1.0e6]*npars,
-                                 'pmax': [1.0e6]*npars,
-                                 'pstart': [1.0e-10]*npars,
-                                 'interval': [False]*npars,
-                                 'numpars': npars})
-        self.tm_sig = tm(self.psr)
-        return {'timingmodel': newsignal}
-    
-    
-    def add_fourier(self):
-        npars = 2 * self.nfreqcomps
-        newsignal = OrderedDict({'type': 'fouriermode',
-                                 'name': 'fouriermode',
-                                 'pmin': [-1.0e6]*npars,
-                                 'pmax': [1.0e6]*npars,
-                                 'pstart': [1.0e-9]*npars,
-                                 'interval': [False]*npars,
-                                 'numpars': npars})
-        
-        return {'fouriermode': newsignal}
-    
-    
-    def add_jitter(self):
-        npars = len(self.Jvec)
-        newsignal = OrderedDict({'type': 'jittermode',
-                                 'name': 'jittermode',
-                                 'pmin': [-1.0e6]*npars,
-                                 'pmax': [1.0e6]*npars,
-                                 'pstart': [1.0e-9]*npars,
-                                 'interval': [False]*npars,
-                                 'numpars': npars})
-        
-        return {'jittermode': newsignal}
-        
-    
-    
-    def add_outlier(self):
-        newsignal = OrderedDict({'type': 'outlier',
-                                 'name': self.pname + '_outlierprob',
-                                 'pmin': [0.0],
-                                 'pmax': [1.0],
-                                 'pstart': [0.001],
-                                 'interval': [True],
-                                 'numpars': 1})
-        return {'outlier': newsignal}
 
 
     def setWhiteNoise(self, calc_gradient=True):
@@ -472,10 +193,9 @@ class ptaLikelihood(object):
         sTmax = self.psr.toas.max() - self.psr.toas.min()
 
         self.Phivec[:] = rn.get_phi(self.ptaparams)
-        # self.Phivec[:] = powerlaw(log10A, gamma, sTmax, self.Ffreqs)
 
         if calc_gradient:
-            d_mat = d_powerlaw(log10A, gamma, sTmax, self.Ffreqs)
+            d_mat = ut.d_powerlaw(log10A, gamma, sTmax, self.Ffreqs)
             for key, _ in self.ptaparams.items():
                 if key.endswith('log10_A'):
                     self.d_Phivec_d_param[self.ptadict[key]] = d_mat[:, 0]
@@ -497,7 +217,7 @@ class ptaLikelihood(object):
 
         self.detresiduals = self.psr.residuals.copy()
 
-        for key, sig in self.signals.items():
+        for _, sig in self.signals.items():
             sparams = parameters[sig['msk']]
 
             if sig['type'] == 'bwm':
@@ -513,7 +233,7 @@ class ptaLikelihood(object):
             pulsarind = 0
             if pulsarind not in self.outlier_sig_dict:
                 self.outlier_sig_dict[pulsarind] = []
-            for key, sig in self.signals.items():
+            for _, sig in self.signals.items():
                 parslice = sig['msk']
                 sparams = parameters[parslice]
 
@@ -627,25 +347,3 @@ class ptaLikelihood(object):
         ll = np.sum(logl_outlier) - 0.5*np.sum(bBb) - 0.5*np.sum(ldB)
 
         return ll, gradient
-
-
-
-def powerlaw(lAmp, Si, Tmax, freqs, spy=31557600.0):
-    freqpy = freqs * spy
-    return (10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy**(-Si)
-
-
-def d_powerlaw(lAmp, Si, Tmax, freqs, ntotfreqs=None, nfreqind=None, spy=31557600.0):
-    if ntotfreqs is None:
-        ntotfreqs = len(freqs)
-    if nfreqind is None:
-        nfreqind = 0
-
-    freqpy = freqs * spy
-    d_mat = np.zeros((ntotfreqs, 3))
-
-    d_mat[nfreqind:nfreqind+len(freqs), 0] = (2*np.log(10)*10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-Si)
-    d_mat[nfreqind:nfreqind+len(freqs), 1] = -np.log(freqpy)*(10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-Si)
-    d_mat[nfreqind:nfreqind+len(freqs), 2] = 0.0
-
-    return d_mat
