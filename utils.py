@@ -1,33 +1,56 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Aug 17 13:17:29 2020
+Utilities module containing standalone functions used in pulsar data
+preparation and likelihood calculations.
 
-@author: marvin
+Requirements:
+    numpy
+    enterprise
 """
 
 import numpy as np
 
+import enterprise.constants as const
 from enterprise.signals.utils import create_quantization_matrix
 
 
-def d_powerlaw(lAmp, Si, Tmax, freqs, ntotfreqs=None, nfreqind=None, spy=31557600.0):
+def d_powerlaw(lAmp, Si, Tmax, freqs, ntotfreqs=None):
+    """Returns the derivative of power spectral density given power-law signal
+    parameters
+
+    :param lAmp: Log10 of the power-law amplitude
+    :param Si: Spectral index
+    :param Tmax: max(TOA) - min(TOA) for data range
+    :param freqs: Frequencies of all bins
+    :param ntotfreqs: Total number of frequency bins, defaults to None
+    :return: (len(freqs) x 3) array containing derivatives of PSD wrt signal
+        parameters
+    """
     if ntotfreqs is None:
         ntotfreqs = len(freqs)
-    if nfreqind is None:
-        nfreqind = 0
 
-    freqpy = freqs * spy
+    freqpy = freqs * const.yr
     d_mat = np.zeros((ntotfreqs, 3))
 
-    d_mat[nfreqind:nfreqind+len(freqs), 0] = (2*np.log(10)*10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-Si)
-    d_mat[nfreqind:nfreqind+len(freqs), 1] = -np.log(freqpy)*(10**(2*lAmp) * spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-Si)
-    d_mat[nfreqind:nfreqind+len(freqs), 2] = 0.0
+    d_mat[0:len(freqs), 0] = (2*np.log(10)*10**(2*lAmp) * const.yr**3 / \
+                                             (12*np.pi*np.pi * Tmax)) * \
+                                             freqpy ** (-Si)
+    d_mat[0:len(freqs), 1] = -np.log(freqpy)*(10**(2*lAmp) * const.yr**3 / \
+                                             (12*np.pi*np.pi * Tmax)) * \
+                                             freqpy ** (-Si)
+    d_mat[0:len(freqs), 2] = 0.0
 
     return d_mat
 
 
 def argsortTOAs(toas, flags):
+    """Sort TOA vector by absolute TOA and backend flags
+
+    :param array toas: Array of pulsar TOAS
+    :param array flags: N TOA length array of backend flags
+    :return: N TOA length array of indices to sort TOA vector
+    """
     U, _ = create_quantization_matrix(toas, nmin=1)
     isort = np.argsort(toas, kind='mergesort')
     flagvals = list(set(flags))
@@ -40,22 +63,25 @@ def argsortTOAs(toas, flags):
                 epmsk = flagmask[colmask]
                 epinds = np.flatnonzero(epmsk)
                 if len(epinds) == epinds[-1] - epinds[0] + 1:
-                    # Keys are exclusively in succession
                     pass
                 else:
                     episort = np.argsort(flagmask[colmask], kind='mergesort')
                     isort[colmask] = isort[colmask][episort]
             else:
-                # Only one element, always ok
                 pass
-    # Now that we have a correct permutation, also construct the inverse
-    iisort = np.zeros(len(isort), dtype=np.int)
-    for ii, p in enumerate(isort):
-        iisort[p] = ii
 
-    return isort, iisort
+    return isort
+
 
 def set_Uindslc(Umat, Uind):
+    """Filter quantization matrix by removing observing epochs containing <4
+    TOAs. This is to avoid issues when computing gradients.
+
+    :param Umat: Quantization matrix mapping TOAs to observing epochs
+    :param Uind: List of slice objects for non-zero elements of `Umat`
+    :return: Quantization matrix with short observing epochs removed and array
+        containing start and stop indices of corresponding slice objects
+    """
     Uinds = []
     for ind in Uind:
         Uinds.append((ind.start, ind.stop))
@@ -67,8 +93,8 @@ def set_Uindslc(Umat, Uind):
 
     Uindslc = np.array(Uinds, dtype=np.int)
     Umatslc = np.delete(Umat, smallepochs, axis=1)
-    
+
     Uindslc = np.delete(Uindslc, smallepochs, axis=0)
     Umat = Umatslc
-    
+
     return Umat, Uindslc

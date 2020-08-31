@@ -1,33 +1,52 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sun Jul  5 20:09:02 2020
+Contains base class for computing the log likeihood and gradient for a single
+pulsar, including an outlier parameter to detect outlying TOAs. Any coordinate
+transformations to be applied build off of this base class.
 
-@author: marvin
+Class methods include computing white noise vectors (N and J), red noise
+vectors (Phi), outlier parameters, updating deterministic signals, and
+computing the log likelihood and gradient.
+
+This class is a near copy of the ptaLikelihood class found in piccard
+(https://github.com/vhaasteren/piccard), and the methods have only been
+updated as necessary to work with enterprise Pulsar objects instead of the
+data structures in piccard.
+
+Requirements:
+    numpy
 """
 
 
 import numpy as np
-import scipy.linalg as sl
 
 from jitterext import cython_Uj
-from pulsar import HierarchicalPTA
+from pulsar import OutlierPulsar
 import utils as ut
 
 
-class ptaLikelihood(HierarchicalPTA):
+class ptaLikelihood(OutlierPulsar):
+    """This class serves as a base class for computing the log likelihood and
+    gradient for a single pulsar. It contains methods to initialize and compute
+    any auxilliary quantities needed for likelihood calculation, and includes
+    an additional hyperparameter, corresponding to an outlier 'signal', to
+    include with the noise parameters. When sampled using HMC, NUTS, or other
+    gradient-based Monte Carlo samplers, this additional parameter can be used
+    to detect outlying TOAs in the dataset.
 
+    :param parfile: Corresponding .par file of pulsar
+    :param timfile: Corresponding .tim file of pulsar
+    """
     def __init__(self, parfile, timfile):
+        """Constructor method
+        """
         super(ptaLikelihood, self).__init__(parfile, timfile)
 
         self.basepmin = None
         self.basepmax = None
         self.basepstart = None
 
-        self.Mmat_g = self.gibbs_set_design()
-        self.Zmat = None
-        self.ZNZ = None
-        self.ZNyvec = None
 
         self.outlier_prob = None
         self.detresiduals = None
@@ -38,100 +57,13 @@ class ptaLikelihood(HierarchicalPTA):
         self.d_Pr_d_b = None
 
 
-        self.setBounds()
-        self.setZmat()
-        self.setFunnelAuxiliary()
+        self.initBounds()
 
 
-    def gibbs_set_design(self, gibbsmodel=['rednoise', 'design', 'jitter']):
-        F_list = ['Offset', \
-                'LAMBDA', 'BETA', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', \
-                'ELONG', 'ELAT', 'PMELONG', 'PMELAT', 'TASC', 'EPS1', 'EPS2', \
-                'XDOT', 'PBDOT', 'KOM', 'KIN', 'EDOT', 'MTOT', 'SHAPMAX', \
-                'GAMMA', 'X2DOT', 'XPBDOT', 'E2DOT', 'OM_1', 'A1_1', 'XOMDOT', \
-                'PMLAMBDA', 'PMBETA', 'PX', 'PB', 'A1', 'E', 'ECC', \
-                'T0', 'OM', 'OMDOT', 'SINI', 'A1', 'M2']
-        F_front_list = ['JUMP', 'F']
-        D_list = ['DM', 'DM1', 'DM2', 'DM3', 'DM4']
-        U_list = []
-
-        Mmask_F = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
-        Mmask_D = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
-        Mmask_U = np.array([0]*len(self.psr.fitpars), dtype=np.bool)
-        Mmat_g = np.zeros(self.psr.Mmat.shape)
-        for ii, par in enumerate(self.psr.fitpars):
-            incrn = False
-            for par_front in F_front_list:
-                if par[:len(par_front)] == par_front:
-                    incrn = True
-
-            if (par in F_list or incrn) and 'rednoise' in gibbsmodel:
-                Mmask_F[ii] = True
-
-            if par in D_list and 'dm' in gibbsmodel:
-                Mmask_D[ii] = True
-
-            if par in U_list and 'jitter' in gibbsmodel:
-                Mmask_U[ii] = True
-
-        if np.sum(np.logical_and(Mmask_F, Mmask_D)) > 0 or \
-                np.sum(np.logical_and(Mmask_F, Mmask_U)) > 0 or \
-                np.sum(np.logical_and(Mmask_D, Mmask_U)) > 0:
-            raise ValueError("Conditional lists cannot overlap")
-
-
-        Mmask_M = np.array([1]*Mmat_g.shape[1], dtype=np.bool)
-        if 'rednoise' in gibbsmodel:
-            Mmask_M = np.logical_and(Mmask_M, \
-                    np.logical_not(Mmask_F))
-        if 'dm' in gibbsmodel:
-            Mmask_M = np.logical_and(Mmask_M, \
-                    np.logical_not(Mmask_D))
-        if 'jitter' in gibbsmodel:
-            Mmask_M = np.logical_and(Mmask_M, \
-                    np.logical_not(Mmask_U))
-
-        # Create orthogonals for all of these
-        if np.sum(Mmask_F) > 0:
-            U, _, _ = sl.svd(self.psr.Mmat[:, Mmask_F], full_matrices=False)
-            Mmat_g[:, Mmask_F] = U
-
-        if np.sum(Mmask_D) > 0:
-            U, _, _ = sl.svd(self.psr.Mmat[:, Mmask_D], full_matrices=False)
-            Mmat_g[:, Mmask_D] = U
-
-        if np.sum(Mmask_U) > 0:
-            U, _, _ = sl.svd(self.psr.Mmat[:, Mmask_U], full_matrices=False)
-            Mmat_g[:, Mmask_U] = U
-
-        if np.sum(Mmask_M) > 0:
-            U, _, _ = sl.svd(self.psr.Mmat[:, Mmask_M], full_matrices=False)
-            Mmat_g[:, Mmask_M] = U
-
-        return Mmat_g
-
-
-    def setZmat(self):
-        if 'timingmodel' in self.ptaparams.keys():
-            Zmat = self.Mmat_g.copy()
-        if 'fouriermode' in self.ptaparams.keys():
-            Zmat = np.append(Zmat, self.Fmat, axis=1)
-        if 'jittermode' in self.ptaparams.keys():
-            Zmat = np.append(Zmat, self.Umat, axis=1)
-
-        self.Zmat = Zmat
-
-
-    def setFunnelAuxiliary(self):
-        Nvec = self.psr.toaerrs**2
-        ZNyvec = np.dot(self.Zmat.T, self.psr.residuals / Nvec)
-        ZNZ = np.dot(self.Zmat.T / Nvec, self.Zmat)
-
-        self.ZNZ = ZNZ
-        self.ZNyvec = ZNyvec
-
-
-    def setBounds(self):
+    def initBounds(self):
+        """Set parameter vector minimum, maximum, and start values by building
+        from the :class: `OutlierPulsar` signal dictionary
+        """
         pmin = []
         pmax = []
         pstart = []
@@ -146,11 +78,20 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def updateParams(self, parameters):
+        """Update parameter name:value dictionary with new values
+
+        :param parameters: Vector of signal parameters
+        """
         for key, value in self.ptadict.items():
             self.ptaparams[key] = parameters[value]
 
 
     def setWhiteNoise(self, calc_gradient=True):
+        """Compute white noise vectors for EFAC, EQUAD, and ECORR signals, and
+        optionally calculate their derivatives.
+
+        :param calc_gradient: Include gradient calculation, default is True
+        """
         self.Nvec[:] = 0
         self.Jvec[:] = 0
 
@@ -185,6 +126,11 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def setPhi(self, calc_gradient=True):
+        """Compute red noise Phi matrix for log10Amp and spectral index
+        parameters, and optionally calculate their derivatives.
+
+        :param calc_gradient: Include gradient calculation, default is True
+        """
         self.Phivec[:] = 0
 
         rn = self.rn_sig
@@ -204,6 +150,9 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def setOutliers(self):
+        """Set outlier probability parameter and its corresponding index in the
+        parameter vector.
+        """
         for key, param in self.ptaparams.items():
             if key.endswith('outlierprob'):
                 self.outlier_prob = param
@@ -211,6 +160,12 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def setDetSources(self, parameters, calc_gradient=True):
+        """Update the deterministic signals given a parameter vector, and
+        optionally calculate their derivatives.
+
+        :param parameters: Vector of signal parameters
+        :param calc_gradient: Include gradient calculation, default is True
+        """
         d_L_d_b = np.zeros_like(parameters)
         d_Pr_d_b = np.zeros_like(parameters)
         self.outlier_sig_dict = dict()
@@ -271,6 +226,12 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def set_hyperparameters(self, parameters, calc_gradient=True):
+        """Wrapper function to update all hyperparameters (white/red noise,
+        outliers) and their associated vector and matrix quantities.
+
+        :param parameters: Vector of signal parameters
+        :param calc_gradient: Include gradient calculation, default is True
+        """
         self.updateParams(parameters)
 
         self.setPhi(calc_gradient=calc_gradient)
@@ -279,7 +240,15 @@ class ptaLikelihood(HierarchicalPTA):
 
 
     def base_loglikelihood_grad(self, parameters, set_hyper_params=True, calc_gradient=True):
+        """Return the log likelihood and gradient for the original,
+        non-transformed coordinates.
 
+        :param parameters: Vector of signal parameters
+        :param set_hyper_params: Update hyperparameter values before computing
+            log likelihood, default is True
+        :param calc_gradient: Include gradient calculation, default is True
+        :return: Log likelihood and gradient
+        """
         if set_hyper_params:
             self.set_hyperparameters(parameters, calc_gradient=calc_gradient)
             self.setDetSources(parameters, calc_gradient=calc_gradient)
@@ -308,7 +277,8 @@ class ptaLikelihood(HierarchicalPTA):
             gradient[pbind] += np.sum((-np.exp(logL0)+1.0/P0)/bigL)
 
         for key, d_Nvec_d_p in self.d_Nvec_d_param.items():
-            d_L_d_b_o = 0.5*(self.detresiduals**2 * d_Nvec_d_p / self.Nvec**2 - d_Nvec_d_p / self.Nvec)
+            d_L_d_b_o = 0.5*(self.detresiduals**2 * d_Nvec_d_p / \
+                             self.Nvec**2 - d_Nvec_d_p / self.Nvec)
             gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
 
         if 'fouriermode' in self.ptaparams.keys():
