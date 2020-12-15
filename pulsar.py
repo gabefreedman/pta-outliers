@@ -244,6 +244,7 @@ class OutlierPulsar():
     def load_t2pulsar(self, parfile, timfile):
         """Load ephemeris and frequency parameters directly from libstempo
         object
+	TODO: Remove this dependency on libstempo, move it to PINT (or both)
 
         :param parfile: Corresponding .par file of pulsar
         :param timfile: Corresponding .tim file of pulsar
@@ -270,7 +271,7 @@ class OutlierPulsar():
         else:
             flags = self.ltpsr.flagvals('be')
 
-        isort, _ = ut.argsortTOAs(toas, flags)
+        isort = ut.argsortTOAs(toas, flags)
 
         psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
         self.pname = psr.name
