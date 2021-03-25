@@ -33,7 +33,6 @@ from enterprise.signals import selections, white_signals, gp_signals, utils
 from enterprise.signals.gp_bases import createfourierdesignmatrix_red
 from enterprise.signals.utils import create_quantization_matrix, quant2ind
 
-#import libstempo as lt
 import pint.residuals as resid
 import pint.toa as toa
 import pint.models as model
@@ -43,10 +42,10 @@ import utils as ut
 
 
 class OutlierPulsar():
-    """This class builds off of (but does not directly inherit from) the Pulsar
-    class in enterprise. :class: `OutlierPulsar` creates a Pulsar object from
-    the input .par and .tim file, and can be referenced with the .psr
-    attribute. Information already contained in the Pulsar object, such as
+    """This class builds off of (but does not directly inherit from) the PintPulsar
+    class in enterprise. :class: `OutlierPulsar` takes a PintPulsar object as
+    input, and can be referenced with the .psr
+    attribute. Information already contained in the PintPulsar object, such as
     TOAs, residuals, design matrix, etc., can be accessed as normal with
     commands such as .psr.Mmat, .psr.toas, etc.
 
@@ -58,23 +57,22 @@ class OutlierPulsar():
     existing noise parameters, which can then be used to perform single-pulsar
     outlier-analysis.
 
-    :param parfile: Corresponding .par file of pulsar
-    :param timfile: Corresponding .tim file of pulsar
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
     :param selection: enterprise Selection object for separating TOAs into
         groups, default is by_backend
     :param nfreqcomps: Number of Fourier modes for red noise signal, default
         is 30
     """
-    def __init__(self, parfile, timfile,
+    def __init__(self, enterprise_pintpulsar, 
                  selection=selections.Selection(selections.by_backend),
                  nfreqcomps=30):
         """Constructor method
         """
-        self.parfile = parfile
-        self.timfile = timfile
+        #self.parfile = parfile
+        #self.timfile = timfile
         self.selection = selection
 
-        # Initialize libstempo and enterprise pulsar objects
+        # Initialize enterprise PintPulsar object
         #self.ltpsr = None
         self.ephem = None
         self.F0 = None
@@ -120,19 +118,16 @@ class OutlierPulsar():
         self.ptadict = dict()
         self.ptaparams = dict()
 
-        self.init_hierarchical_model(parfile, timfile)
+        self.init_hierarchical_model(enterprise_pintpulsar)
 
-    def init_hierarchical_model(self, parfile, timfile):
+    def init_hierarchical_model(self, PintPulsar):
         """Run initialization functions for loading :class: `OutlierPulsar`
         object, and set auxilliary quantities for likelihood calculation.
 
-        :param parfile: Corresponding .par file of pulsar
-        :param timfile: Corresponding .tim file of pulsar
+        :param PintPulsar: `enterprise.PintPulsar` object
         """
-        #self.load_t2pulsar(parfile, timfile)
-        #self.load_entpulsar(parfile, timfile)
-        #self.ltpsr = None
-        self.load_entpulsar_pint(parfile, timfile)
+        # Define self.psr...
+        self.load_ent_pintpsr(PintPulsar)
 
         self.orthogonal_designmatrix()
         self.set_Fmat_auxiliaries()
@@ -247,107 +242,26 @@ class OutlierPulsar():
         self.Zmat = Zmat
 
 
-    def load_t2pulsar(self, parfile, timfile):
-        """Load ephemeris and frequency parameters directly from libstempo
-        object
-	TODO: Remove this dependency on libstempo, move it to PINT (or both)
-
-        :param parfile: Corresponding .par file of pulsar
-        :param timfile: Corresponding .tim file of pulsar
-        """
-        self.ltpsr = lt.tempopulsar(parfile, timfile)
-        self.ephem = self.ltpsr.ephemeris
-        self.F0 = self.ltpsr['F0'].val
-        self.P0 = 1.0 / self.F0
-
-
-    def load_entpulsar(self, parfile, timfile):
-        """Load enterprise Pulsar object, then resort and reassign TOAs,
-        residuals, and TOA errors based on absolute TOA values
-
-        :param parfile: Corresponding .par file of pulsar
-        :param timfile: Corresponding .tim file of pulsar
-        """
-        toas = np.double(np.array(self.ltpsr.toas()))*86400
-        residuals = np.double(self.ltpsr.residuals())
-        toaerrs = np.double(1e-6*self.ltpsr.toaerrs)
-
-        if 'f' in self.ltpsr.flags():
-            flags = self.ltpsr.flagvals('f')
-        else:
-            flags = self.ltpsr.flagvals('be')
-
-        isort = ut.argsortTOAs(toas, flags)
-
-        psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
-        self.pname = psr.name
-
-        psr._isort = isort
-
-        psr._toas = toas
-        psr._residuals = residuals
-        psr._toaerrs = toaerrs
-
-        self.psr = psr
-
-    def get_model_and_toas(self,pathparfile,pathtimfiles):
-        """Return the PINT model and TOA objects"""
-
-        # Individual tim file
-        if isinstance(pathtimfiles, str):
-            toas = [pathtimfiles]
-
-        m = model.get_model(pathparfile)
-        self.ephem = m.EPHEM.value
-        self.F0 = m.F0.value 
-        self.P0 = 1.0 / self.F0
-
-        # Currently leaves out BIPM and planets...?
-        t = toa.get_TOAs(toas,
-                      ephem=self.ephem,
-                      model=m)
-
-        return m, t
-
-    def load_entpulsar_pint(self,parfile,timfile):
-        """Load enterprise Pulsar object, then re-sort and re-assign TOAs,
-        residuals, and TOA errors based on absolute TOA values...?
+    def load_ent_pintpsr(self,epp):
+        """Load enterprise PintPulsar object, then re-sort based on available flags.
 
         Parameters
         ==========
-        model: `pint.model.TimingModel` object
-        toas: `pint.toa.TOAs` object
+        epp: `enterprise.PintPulsar` object
     
-        Returns
-        =======
-        ???
         """
-        mo,to = self.get_model_and_toas(parfile,timfile)
-        toas = np.double(np.array(to.get_mjds().value))*86400
-        residuals = resid.Residuals(to, mo).time_resids.to(u.s).value
-        toaerrs = np.double(to.get_errors().to(u.s).value)
-
-        # Most NANOGrav releases (except 5 yr; -be) include -f flags for all TOAs (check).
-        f_flag_test = np.array([f is not None for f in to.get_flag_value('f')[0]])
-        be_flag_test =  np.array([f is not None for f in to.get_flag_value('be')[0]])
-        if np.all(f_flag_test):
-            flags = np.array(to.get_flag_value('f')[0])
-        elif np.all(be_flag_test):
-            flags = np.array(to.get_flag_value('be')[0])
-        else:
-            sys.exit("Input TOAs must have either f/be flags.")
-    
-        isort = ut.argsortTOAs(toas, flags)
-
-        psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False, timing_package='pint')
-        self.pname = psr.name
-
+        # Most NANOGrav releases (except 5 yr; -be) include -f flags for all TOAs.
+        try:
+            flags = epp.flags['f']
+        except:
+            flags = epp.flags['be']
+   
+        isort = ut.argsortTOAs(epp._toas, flags)
+        self.ephem = [waiting on enterprise functionality]
+        self.F0 = [waiting on enterprise functionality]
+        self.P0 = 1.0 / self.F0
+        self.pname = epp.name
         psr._isort = isort
-
-        psr._toas = toas
-        psr._residuals = residuals
-        psr._toaerrs = toaerrs
-
         self.psr = psr
 
 
