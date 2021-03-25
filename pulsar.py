@@ -257,12 +257,12 @@ class OutlierPulsar():
             flags = epp.flags['be']
    
         isort = ut.argsortTOAs(epp._toas, flags)
-        self.ephem = [waiting on enterprise functionality]
-        self.F0 = [waiting on enterprise functionality]
+        self.ephem = 'DE436' #waiting on enterprise functionality
+        self.F0 = 186.4940812354548996 #waiting on enterprise functionality
         self.P0 = 1.0 / self.F0
         self.pname = epp.name
-        psr._isort = isort
-        self.psr = psr
+        epp._isort = isort
+        self.psr = epp
 
 
     def loadSignals(self, incEfac=True, incEquad=True, incEcorr=True,
