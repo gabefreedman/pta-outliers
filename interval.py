@@ -29,18 +29,17 @@ class Interval(Funnel):
     future to allow this transformation to be done independent of other
     coordinate transforamtions in this package.
 
-    :param parfile: Corresponding .par file of pulsar
-    :param timfile: Corresponding .tim file of pulsar
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
     :param pstart: Starting parameter vector under interval transformation. It
         is the eventual first input to the NUTS sampler
     :param msk: Vector of booleans for identifying hyperparameters
     :param a: Minimum parameter vector for interval transform
     :param b: Maximum parameter vector for interval transform
     """
-    def __init__(self, parfile, timfile):
+    def __init__(self, enterprise_pintpulsar):
         """Constructor method
         """
-        super(Interval, self).__init__(parfile, timfile)
+        super(Interval, self).__init__(enterprise_pintpulsar)
 
         self.pstart = None
 

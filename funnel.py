@@ -28,13 +28,12 @@ class Funnel(ptaLikelihood):
     For more information about Neal's funnel, check
     Neal, Radford M. 2003. “Slice Sampling.” Annals of Statistics 31 (3): 705–67.
 
-    :param parfile: Corresponding .par file of pulsar
-    :param timfile: Corresponding .tim file of pulsar
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
     """
-    def __init__(self, parfile, timfile):
+    def __init__(self, enterprise_pintpulsar):
         """Constructor method
         """
-        super(Funnel, self).__init__(parfile, timfile)
+        super(Funnel, self).__init__(enterprise_pintpulsar)
 
         self.funnelmin = None
         self.funnelmax = None

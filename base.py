@@ -35,13 +35,12 @@ class ptaLikelihood(OutlierPulsar):
     gradient-based Monte Carlo samplers, this additional parameter can be used
     to detect outlying TOAs in the dataset.
 
-    :param parfile: Corresponding .par file of pulsar
-    :param timfile: Corresponding .tim file of pulsar
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
     """
-    def __init__(self, parfile, timfile):
+    def __init__(self, enterprise_pintpulsar):
         """Constructor method
         """
-        super(ptaLikelihood, self).__init__(parfile, timfile)
+        super(ptaLikelihood, self).__init__(enterprise_pintpulsar)
 
         self.basepmin = None
         self.basepmax = None
