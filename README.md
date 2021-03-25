@@ -15,5 +15,5 @@ to a separate module, and allow the user to either run the notebook or import th
 * Python 3+
 * numpy
 * scipy
-* [libstempo](https://github.com/vallis/libstempo)
+* [pint](https://github.com/nanograv/PINT)
 * [enterprise](https://github.com/nanograv/enterprise)
