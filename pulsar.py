@@ -268,7 +268,7 @@ class OutlierPulsar():
         :param parfile: Corresponding .par file of pulsar
         :param timfile: Corresponding .tim file of pulsar
         """
-        toas = np.double(np.array(self.ltpsr.toas())-53000.0)*86400
+        toas = np.double(np.array(self.ltpsr.toas()))*86400
         residuals = np.double(self.ltpsr.residuals())
         toaerrs = np.double(1e-6*self.ltpsr.toaerrs)
 
@@ -323,7 +323,7 @@ class OutlierPulsar():
         ???
         """
         mo,to = self.get_model_and_toas(parfile,timfile)
-        toas = np.double(np.array(to.get_mjds().value-53000.0))*86400
+        toas = np.double(np.array(to.get_mjds().value))*86400
         residuals = resid.Residuals(to, mo).time_resids.to(u.s).value
         toaerrs = np.double(to.get_errors().to(u.s).value)
 
