@@ -22,6 +22,7 @@ Requirements:
     enterprise
 """
 
+import sys
 from collections import OrderedDict
 import numpy as np
 import scipy.linalg as sl
@@ -32,7 +33,11 @@ from enterprise.signals import selections, white_signals, gp_signals, utils
 from enterprise.signals.gp_bases import createfourierdesignmatrix_red
 from enterprise.signals.utils import create_quantization_matrix, quant2ind
 
-import libstempo as lt
+#import libstempo as lt
+import pint.residuals as resid
+import pint.toa as toa
+import pint.models as model
+import astropy.units as u
 
 import utils as ut
 
@@ -70,7 +75,7 @@ class OutlierPulsar():
         self.selection = selection
 
         # Initialize libstempo and enterprise pulsar objects
-        self.ltpsr = None
+        #self.ltpsr = None
         self.ephem = None
         self.F0 = None
         self.P0 = None
@@ -124,9 +129,10 @@ class OutlierPulsar():
         :param parfile: Corresponding .par file of pulsar
         :param timfile: Corresponding .tim file of pulsar
         """
-        self.load_t2pulsar(parfile, timfile)
-        self.load_entpulsar(parfile, timfile)
-        self.ltpsr = None
+        #self.load_t2pulsar(parfile, timfile)
+        #self.load_entpulsar(parfile, timfile)
+        #self.ltpsr = None
+        self.load_entpulsar_pint(parfile, timfile)
 
         self.orthogonal_designmatrix()
         self.set_Fmat_auxiliaries()
@@ -274,6 +280,66 @@ class OutlierPulsar():
         isort = ut.argsortTOAs(toas, flags)
 
         psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False)
+        self.pname = psr.name
+
+        psr._isort = isort
+
+        psr._toas = toas
+        psr._residuals = residuals
+        psr._toaerrs = toaerrs
+
+        self.psr = psr
+
+    def get_model_and_toas(self,pathparfile,pathtimfiles):
+        """Return the PINT model and TOA objects"""
+
+        # Individual tim file
+        if isinstance(pathtimfiles, str):
+            toas = [pathtimfiles]
+
+        m = model.get_model(pathparfile)
+        self.ephem = m.EPHEM.value
+        self.F0 = m.F0.value 
+        self.P0 = 1.0 / self.F0
+
+        # Currently leaves out BIPM and planets...?
+        t = toa.get_TOAs(toas,
+                      ephem=self.ephem,
+                      model=m)
+
+        return m, t
+
+    def load_entpulsar_pint(self,parfile,timfile):
+        """Load enterprise Pulsar object, then re-sort and re-assign TOAs,
+        residuals, and TOA errors based on absolute TOA values...?
+
+        Parameters
+        ==========
+        model: `pint.model.TimingModel` object
+        toas: `pint.toa.TOAs` object
+    
+        Returns
+        =======
+        ???
+        """
+        mo,to = self.get_model_and_toas(parfile,timfile)
+        toas = np.double(np.array(to.get_mjds().value-53000.0))*86400
+        residuals = resid.Residuals(to, mo).time_resids.to(u.s).value
+        toaerrs = np.double(to.get_errors().to(u.s).value)
+
+        # Most NANOGrav releases (except 5 yr; -be) include -f flags for all TOAs (check).
+        f_flag_test = np.array([f is not None for f in to.get_flag_value('f')[0]])
+        be_flag_test =  np.array([f is not None for f in to.get_flag_value('be')[0]])
+        if np.all(f_flag_test):
+            flags = np.array(to.get_flag_value('f')[0])
+        elif np.all(be_flag_test):
+            flags = np.array(to.get_flag_value('be')[0])
+        else:
+            sys.exit("Input TOAs must have either f/be flags.")
+    
+        isort = ut.argsortTOAs(toas, flags)
+
+        psr = Pulsar(parfile, timfile, ephem=self.ephem, sort=False, timing_package='pint')
         self.pname = psr.name
 
         psr._isort = isort
