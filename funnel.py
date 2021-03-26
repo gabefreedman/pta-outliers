@@ -28,7 +28,7 @@ class Funnel(ptaLikelihood):
     For more information about Neal's funnel, check
     Neal, Radford M. 2003. “Slice Sampling.” Annals of Statistics 31 (3): 705–67.
 
-    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object (with drop_pintpsr=False)
     """
     def __init__(self, enterprise_pintpulsar):
         """Constructor method

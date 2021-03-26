@@ -57,7 +57,7 @@ class OutlierPulsar():
     existing noise parameters, which can then be used to perform single-pulsar
     outlier-analysis.
 
-    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object (with drop_pintpsr=False)
     :param selection: enterprise Selection object for separating TOAs into
         groups, default is by_backend
     :param nfreqcomps: Number of Fourier modes for red noise signal, default
@@ -257,8 +257,8 @@ class OutlierPulsar():
             flags = epp.flags['be']
    
         isort = ut.argsortTOAs(epp._toas, flags)
-        self.ephem = 'DE436' #waiting on enterprise functionality
-        self.F0 = 186.4940812354548996 #waiting on enterprise functionality
+        self.ephem = epp.model.EPHEM.value
+        self.F0 = epp.model.F0.value
         self.P0 = 1.0 / self.F0
         self.pname = epp.name
         epp._isort = isort

@@ -29,7 +29,7 @@ class Interval(Funnel):
     future to allow this transformation to be done independent of other
     coordinate transforamtions in this package.
 
-    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object (with drop_pintpsr=False)
     :param pstart: Starting parameter vector under interval transformation. It
         is the eventual first input to the NUTS sampler
     :param msk: Vector of booleans for identifying hyperparameters

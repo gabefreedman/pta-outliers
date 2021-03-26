@@ -35,7 +35,7 @@ class ptaLikelihood(OutlierPulsar):
     gradient-based Monte Carlo samplers, this additional parameter can be used
     to detect outlying TOAs in the dataset.
 
-    :param enterprise_pintpulsar: `enterprise.PintPulsar` object
+    :param enterprise_pintpulsar: `enterprise.PintPulsar` object (with drop_pintpsr=False)
     """
     def __init__(self, enterprise_pintpulsar):
         """Constructor method
