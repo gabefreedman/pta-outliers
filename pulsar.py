@@ -260,6 +260,7 @@ class OutlierPulsar():
         self.ephem = epp.model.EPHEM.value
         self.F0 = epp.model.F0.value
         self.P0 = 1.0 / self.F0
+        epp.to_pickle() # write pickle object and delete pint_toas/model.
         self.pname = epp.name
         epp._isort = isort
         self.psr = epp
